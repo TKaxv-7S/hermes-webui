@@ -3798,11 +3798,10 @@ function renderSessionListFromCache(){
           if(!archived) _settleSessionSwipePaint();
         },_committedSwipeDuration);
       }else if(_canSwipeDeleteSession()){
-        _completeSessionSwipePaint(signedDx);
-        const completedAt=Date.now();
+        el.classList.remove('dragging');
         deleteSession(s.session_id,async()=>{
-          const remaining=_committedSwipeDuration-(Date.now()-completedAt);
-          if(remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining));
+          _completeSessionSwipePaint(signedDx);
+          await new Promise(resolve=>setTimeout(resolve,_committedSwipeDuration));
         }).then((deleted)=>{
           if(!deleted) _settleSessionSwipePaint();
         });
@@ -3900,9 +3899,12 @@ function renderSessionListFromCache(){
       // faded until the next sidebar rerender clears their DOM nodes.
       _updateSessionGesture(e.clientX,e.clientY);
     };
-    el.onpointercancel=_clearPointerDragState;
+    el.onpointercancel=(e)=>{
+      if(e.pointerType==='touch') return;
+      _clearPointerDragState();
+    };
     el.onpointerleave=()=>{
-      if(_gestureState!=='idle') _clearPointerDragState();
+      if(_gesturePointerType==='mouse'&&_gestureState!=='idle') _clearPointerDragState();
     };
     el.onpointerup=(e)=>{
       if(e.pointerType==='touch') return;

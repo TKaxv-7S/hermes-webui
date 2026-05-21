@@ -86,9 +86,15 @@ def test_session_swipes_archive_right_and_delete_left():
     assert "_beginSessionGesture(touch.clientX,touch.clientY,'touch');" in SESSIONS_JS
     assert "if(signedDx>0){" in SESSIONS_JS
     assert "_archiveSession(s,!s.archived)" in SESSIONS_JS
-    assert "const completedAt=Date.now();" in SESSIONS_JS
-    assert "const remaining=_committedSwipeDuration-(Date.now()-completedAt);" in SESSIONS_JS
     assert "deleteSession(s.session_id,async()=>{" in SESSIONS_JS
+    delete_branch_start = SESSIONS_JS.find("}else if(_canSwipeDeleteSession()){")
+    delete_branch_end = SESSIONS_JS.find("}else if(typeof showToast", delete_branch_start)
+    assert delete_branch_start >= 0 and delete_branch_end > delete_branch_start
+    delete_branch = SESSIONS_JS[delete_branch_start:delete_branch_end]
+    delete_call_idx = delete_branch.find("deleteSession(s.session_id,async()=>{")
+    delete_complete_idx = delete_branch.find("_completeSessionSwipePaint(signedDx);")
+    assert delete_call_idx > 0 and delete_complete_idx > delete_call_idx
+    assert "const completedAt=Date.now();" not in delete_branch
     assert "showToast('Imported sessions cannot be deleted here.',3000);" in SESSIONS_JS
     assert "let _gestureState='idle';" in SESSIONS_JS
     assert "_gestureState='dragging';" in SESSIONS_JS
@@ -98,7 +104,9 @@ def test_session_swipes_archive_right_and_delete_left():
     assert "const wasDragging=_gestureState==='dragging'||_swipeTracking;" in SESSIONS_JS
     assert "if(_gestureState==='committed'){" in SESSIONS_JS
     assert SESSIONS_JS.count("if(e.pointerType==='touch') return;") >= 3
-    assert "el.onpointercancel=_clearPointerDragState;" in SESSIONS_JS
+    assert "el.onpointercancel=(e)=>{" in SESSIONS_JS
+    assert "if(e.pointerType==='touch') return;" in SESSIONS_JS
+    assert "if(_gesturePointerType==='mouse'&&_gestureState!=='idle') _clearPointerDragState();" in SESSIONS_JS
 
 
 def test_session_swipes_show_visual_feedback_and_touch_load_clears():
@@ -130,7 +138,7 @@ def test_session_swipes_show_visual_feedback_and_touch_load_clears():
     assert "deleteSession(s.session_id,async()=>{" in SESSIONS_JS
     assert "const archived=await _archiveSession(s,!s.archived);" in SESSIONS_JS
     assert "if(!archived) _settleSessionSwipePaint();" in SESSIONS_JS
-    assert "if(remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining));" in SESSIONS_JS
+    assert "await new Promise(resolve=>setTimeout(resolve,_committedSwipeDuration));" in SESSIONS_JS
     assert "async function deleteSession(sid, beforeDelete=null){" in SESSIONS_JS
     assert "if(beforeDelete) await beforeDelete();" in SESSIONS_JS
     assert "requestAnimationFrame(()=>requestAnimationFrame(_clearSessionSwipePaint))" in SESSIONS_JS
