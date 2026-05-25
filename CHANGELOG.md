@@ -9,6 +9,7 @@
 - Live token-usage hints now cap the cumulative in-flight tool-result prompt estimate per assistant turn, preventing many large tool callbacks from temporarily inflating the context ring before exact provider accounting arrives.
 - Streaming checkpoint saves now run under the session's profile environment, so periodic background checkpoints no longer risk falling back to the process-global profile when a WebUI tab is using a non-default profile.
 - Chat streaming now keeps a single live EventSource registered per session/stream, preventing reconnect or context-compaction paths from stacking subscribers and rendering one assistant token stream multiple times.
+- Streaming visible-progress text emitted simultaneously through token, reasoning, and interim-assistant callbacks now renders once in the chat transcript instead of duplicating inside Thinking cards.
 
 ## [v0.51.135] — 2026-05-25 — Release DG (stage-batch17 — 9-PR small-fix batch)
 
