@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Operators can now set `HERMES_WEBUI_CSP_CONNECT_EXTRA` to append validated extra origins to the report-only CSP `connect-src` directive for reverse-proxy or tunnel deployments.
+
 ### Fixed
 
 - Trim session-level tool call payloads to the returned message window for paginated `/api/session` loads, so long tool-heavy sessions do not send historical tool call summaries during ordinary session switching.
