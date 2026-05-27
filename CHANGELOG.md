@@ -3,6 +3,8 @@
 
 ## [Unreleased]
 
+## [v0.51.145] — 2026-05-26 — Release DQ (stage-batch27 — sidebar running-state preservation)
+
 ### Fixed
 
 - Sidebar session rows now preserve the server-reported running state when merging stale optimistic first-turn cache entries, so active background sessions keep their spinner and can later transition to unread correctly. (#2999, #3001)
