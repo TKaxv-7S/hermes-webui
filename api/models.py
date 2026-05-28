@@ -2228,6 +2228,38 @@ def _is_intentionally_background_sidebar_session(session: dict) -> bool:
     return source == 'cron' or sid.startswith('cron_')
 
 
+def _include_project_hidden_background_sidebar_sessions(
+    candidates: list[dict],
+    visible: list[dict],
+) -> list[dict]:
+    """Keep project-assigned background sessions addressable by project chips.
+
+    Cron sessions stay hidden from the default sidebar, but if they have a
+    project assignment they must still be present in the client cache so the
+    dedicated project chip can reveal them (#3019).
+    """
+    visible_ids = {
+        str(session.get('session_id'))
+        for session in visible
+        if session.get('session_id')
+    }
+    out = list(visible)
+    for session in candidates:
+        sid = str(session.get('session_id') or '')
+        if not sid or sid in visible_ids:
+            continue
+        if not _is_intentionally_background_sidebar_session(session):
+            continue
+        if not session.get('project_id'):
+            continue
+        if _sidebar_message_count(session) <= 0:
+            continue
+        row = dict(session)
+        row['default_hidden'] = True
+        out.append(row)
+    return out
+
+
 def _preserve_messageful_sidebar_discoverability(
     candidates: list[dict],
     visible: list[dict],
@@ -2503,8 +2535,10 @@ def all_sessions(diag=None):
                 and not s.get('worktree_path')
             )]
             result = _prefer_fuller_snapshots_for_sidebar(result)
-            visible_result = [s for s in result if not _hide_from_default_sidebar(s)]
-            result = _preserve_messageful_sidebar_discoverability(result, visible_result)
+            sidebar_candidates = result
+            visible_result = [s for s in sidebar_candidates if not _hide_from_default_sidebar(s)]
+            result = _preserve_messageful_sidebar_discoverability(sidebar_candidates, visible_result)
+            result = _include_project_hidden_background_sidebar_sessions(sidebar_candidates, result)
             _strip_sidebar_internal_flags(result)
             # Backfill: sessions created before Sprint 22 have no profile tag.
             # Attribute them to 'default' so the client profile filter works correctly.
@@ -2542,8 +2576,10 @@ def all_sessions(diag=None):
         and not getattr(s, 'worktree_path', None)
     )]
     result = _prefer_fuller_snapshots_for_sidebar(result)
-    visible_result = [s for s in result if not _hide_from_default_sidebar(s)]
-    result = _preserve_messageful_sidebar_discoverability(result, visible_result)
+    sidebar_candidates = result
+    visible_result = [s for s in sidebar_candidates if not _hide_from_default_sidebar(s)]
+    result = _preserve_messageful_sidebar_discoverability(sidebar_candidates, visible_result)
+    result = _include_project_hidden_background_sidebar_sessions(sidebar_candidates, result)
     _strip_sidebar_internal_flags(result)
     for s in result:
         if not s.get('profile'):
