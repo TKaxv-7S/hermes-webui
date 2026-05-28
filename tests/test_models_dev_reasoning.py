@@ -95,6 +95,19 @@ def test_codex_gpt55_uses_models_dev_including_xhigh(monkeypatch):
     assert "xhigh" in result
 
 
+def test_codex_metadata_false_returns_empty(monkeypatch):
+    _install_fake_models_dev(
+        monkeypatch,
+        lambda provider, model: SimpleNamespace(supports_reasoning=False),
+    )
+
+    import api.config as cfg
+
+    assert cfg.resolve_model_reasoning_efforts(
+        "gpt-5.5", provider_id="openai-codex"
+    ) == []
+
+
 def test_copilot_gpt55_caps_at_high(monkeypatch):
     import api.config as cfg
 
