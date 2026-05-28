@@ -1,12 +1,16 @@
 from collections import OrderedDict
+from email.message import Message
+import urllib.error
 
 import api.gateway_chat as gateway_chat
 import api.models as models
 from api.config import STREAMS, create_stream_channel
 from api.models import new_session
 from api.gateway_chat import (
+    _gateway_http_error_event,
     _gateway_sse_delta,
     _gateway_stream_usage,
+    gateway_chat_config_status,
     webui_chat_backend_mode,
     webui_gateway_chat_enabled,
 )
@@ -29,6 +33,36 @@ def test_gateway_chat_backend_only_accepts_explicit_gateway_aliases():
 
 def test_gateway_chat_backend_can_be_enabled_from_config_without_env():
     assert webui_chat_backend_mode({"webui_chat_backend": "api_server"}, {}) == "gateway"
+
+
+def test_gateway_chat_config_status_is_redacted_and_reports_missing_key():
+    status = gateway_chat_config_status(
+        {},
+        {
+            "HERMES_WEBUI_CHAT_BACKEND": "gateway",
+            "HERMES_WEBUI_GATEWAY_BASE_URL": "http://gateway.local",
+        },
+    )
+
+    assert status == {
+        "enabled": True,
+        "backend": "gateway",
+        "base_url_configured": True,
+        "api_key_configured": False,
+    }
+
+
+def test_gateway_chat_config_status_reports_fallback_api_server_key_without_exposing_value():
+    status = gateway_chat_config_status(
+        {},
+        {
+            "HERMES_WEBUI_CHAT_BACKEND": "gateway",
+            "API_SERVER_KEY": "secret-token",
+        },
+    )
+
+    assert status["api_key_configured"] is True
+    assert "secret-token" not in repr(status)
 
 
 def test_gateway_chat_backend_env_wins_over_config_and_stays_safe():
@@ -56,6 +90,44 @@ def test_gateway_stream_usage_normalizes_token_names():
         "estimated_cost": 0.01,
     }
     assert _gateway_stream_usage({}) == {}
+
+
+def test_gateway_http_401_reports_gateway_auth_not_provider_key():
+    exc = urllib.error.HTTPError(
+        "http://gateway.local/v1/chat/completions",
+        401,
+        "Unauthorized",
+        hdrs=Message(),
+        fp=None,
+    )
+
+    event = _gateway_http_error_event(
+        exc,
+        '{"error":{"message":"Invalid API key","code":"invalid_api_key"}}',
+        api_key_configured=False,
+    )
+
+    assert event["label"] == "Gateway authentication failed"
+    assert event["type"] == "gateway_auth_error"
+    assert "HTTP 401" in event["message"]
+    assert "HERMES_WEBUI_GATEWAY_API_KEY" in event["hint"]
+    assert "API_SERVER_KEY" in event["hint"]
+    assert "Invalid API key" not in event["hint"]
+
+
+def test_gateway_http_401_with_key_suggests_key_mismatch():
+    exc = urllib.error.HTTPError(
+        "http://gateway.local/v1/chat/completions",
+        401,
+        "Unauthorized",
+        hdrs=Message(),
+        fp=None,
+    )
+
+    event = _gateway_http_error_event(exc, "", api_key_configured=True)
+
+    assert event["type"] == "gateway_auth_error"
+    assert event["hint"] == "Check that HERMES_WEBUI_GATEWAY_API_KEY matches the Hermes Gateway API_SERVER_KEY."
 
 
 def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monkeypatch):

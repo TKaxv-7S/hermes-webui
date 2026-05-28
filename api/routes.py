@@ -981,6 +981,7 @@ from api.helpers import (
     _redact_text,
 )
 from api.agent_health import build_agent_health_payload
+from api.gateway_chat import gateway_chat_config_status
 from api.request_diagnostics import RequestDiagnostics
 from api.system_health import build_system_health_payload
 
@@ -3954,7 +3955,10 @@ def handle_get(handler, parsed) -> bool:
         return _handle_health(handler, parsed)
 
     if parsed.path == "/api/health/agent":
-        return j(handler, build_agent_health_payload())
+        payload = build_agent_health_payload()
+        payload["gateway_chat"] = gateway_chat_config_status()
+        j(handler, payload)
+        return True
 
     if parsed.path == "/api/system/health":
         j(handler, build_system_health_payload())
