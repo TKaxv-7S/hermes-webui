@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- WebUI now logs structured shutdown diagnostics when the server exits or `/api/shutdown` is called, including active stream IDs to help diagnose interrupted turns after restarts.
+
 ## [v0.51.157] — 2026-05-28 — Release EC (stage-batch39 — 5-PR mixed-risk cleanup: gateway prefill forward + prefill budget + compressed-continuation sidebar + browser-transcript memory guidance + reasoning max parity)
 
 ### Added

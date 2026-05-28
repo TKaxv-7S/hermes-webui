@@ -3852,8 +3852,39 @@ def _serve_shell_unavailable(handler, exc: Exception) -> bool:
     return True
 
 
+_SHUTDOWN_LOG_VALUE_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _shutdown_log_value(value, *, default: str = "unknown", max_len: int = 160) -> str:
+    """Return a bounded single-line value safe for shutdown diagnostics."""
+    if value is None:
+        return default
+    try:
+        text = str(value)
+    except Exception:
+        return default
+    text = _SHUTDOWN_LOG_VALUE_RE.sub("?", text).strip()
+    if not text:
+        return default
+    if len(text) > max_len:
+        text = f"{text[:max_len]}…"
+    return text
+
+
 def _handle_shutdown(handler) -> bool:
     """Shut down the WebUI server process."""
+    headers = getattr(handler, "headers", {})
+    ua = headers.get("User-Agent", "no-ua") if hasattr(headers, "get") else "no-ua"
+    remote = "unknown"
+    if getattr(handler, "client_address", None):
+        remote = getattr(handler, "client_address", ("unknown",))[0]
+    logger.info(
+        "[shutdown-request] remote=%s method=%s path=%s ua=%s",
+        _shutdown_log_value(remote),
+        _shutdown_log_value(getattr(handler, "command", None)),
+        _shutdown_log_value(getattr(handler, "path", None), max_len=240),
+        _shutdown_log_value(ua, default="no-ua", max_len=240),
+    )
     j(handler, {"status": "shutting_down"})
     import signal
     import threading
