@@ -444,6 +444,10 @@ $('btnAttach').onclick=e=>{if(e&&e.preventDefault)e.preventDefault();$('fileInpu
 
   // Raw audio mode preference: send audio file instead of transcribing
   let _rawAudioMode = localStorage.getItem('hermes-raw-audio-mode') === 'true';
+  // Capture backend pinned at recording start ('speech' | 'media' | null) so
+  // _stopMic / onstop act on the backend that actually started, even if the
+  // raw-audio toggle changes mid-recording (#3169 Codex review).
+  let _activeCaptureMode = null;
 
   const btn=$('btnMic');
   const status=$('micStatus');
@@ -549,7 +553,11 @@ $('btnAttach').onclick=e=>{if(e&&e.preventDefault)e.preventDefault();$('fileInpu
 
   function _stopMic(){
     if(!window._micActive) return;
-    if(recognition && !_rawAudioMode){
+    // Stop the backend that was ACTIVE WHEN RECORDING STARTED — not whatever
+    // _rawAudioMode says now. The user can toggle Settings → Sound mid-recording,
+    // which would otherwise make us stop the wrong backend and orphan the other
+    // (#3169 Codex review). _activeCaptureMode is pinned at start.
+    if(recognition && _activeCaptureMode==='speech'){
       recognition.stop();
       return;
     }
@@ -630,6 +638,7 @@ $('btnAttach').onclick=e=>{if(e&&e.preventDefault)e.preventDefault();$('fileInpu
     _finalText='';
     _prefix=ta.value;
     if(recognition && !_forceMediaRecorder && !_rawAudioMode){
+      _activeCaptureMode='speech';
       recognition.start();
       _setRecording(true);
       return;
@@ -659,7 +668,7 @@ $('btnAttach').onclick=e=>{if(e&&e.preventDefault)e.preventDefault();$('fileInpu
         _setRecording(false);
         _stopTracks();
         if(blob.size){
-          if(_rawAudioMode){
+          if(_activeCaptureMode==='media-raw'){
             await _sendRawAudio(blob);
           }else{
             await _transcribeBlob(blob);
@@ -669,6 +678,7 @@ $('btnAttach').onclick=e=>{if(e&&e.preventDefault)e.preventDefault();$('fileInpu
           window._micPendingSend=false;
         }
       };
+      _activeCaptureMode=_rawAudioMode?'media-raw':'media-transcribe';
       mediaRecorder.start();
       _setRecording(true);
     }catch(err){

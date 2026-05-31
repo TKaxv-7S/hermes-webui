@@ -141,3 +141,36 @@ def test_raw_audio_upload_different_formats():
         except KeyError:
             pass
         assert handler.status is not None, f"Failed for {filename} ({mime})"
+
+
+# ── Front-end: raw-audio mic backend pinning (boot.js source invariants) ──────
+# Regression guard for the #3169 Codex-review fix: _stopMic / onstop must act on
+# the capture backend that was ACTIVE WHEN RECORDING STARTED (pinned in
+# _activeCaptureMode), not whatever _rawAudioMode says now — otherwise toggling
+# Settings → Sound mid-recording orphans the wrong backend. Also: an explicit
+# Send click (_micPendingSend) must send even with text in the composer.
+import pathlib as _pathlib
+
+_BOOT_JS = (_pathlib.Path(__file__).parent.parent / "static" / "boot.js").read_text(encoding="utf-8")
+
+
+def test_stop_mic_uses_pinned_active_capture_mode_not_current_rawmode():
+    assert "let _activeCaptureMode" in _BOOT_JS, "_activeCaptureMode must be declared"
+    # _stopMic decides backend from the pinned mode, not _rawAudioMode.
+    assert "_activeCaptureMode==='speech'" in _BOOT_JS
+    # onstop dispatches raw-vs-transcribe from the pinned mode too.
+    assert "_activeCaptureMode==='media-raw'" in _BOOT_JS
+    # the mode is pinned at both start branches.
+    assert "_activeCaptureMode='speech'" in _BOOT_JS
+    assert "_activeCaptureMode=_rawAudioMode?'media-raw':'media-transcribe'" in _BOOT_JS
+
+
+def test_send_raw_audio_honors_explicit_pending_send():
+    # An explicit Send-button click (sets _micPendingSend) must send the raw
+    # audio even when the composer already has text.
+    assert "if(window._micPendingSend){" in _BOOT_JS
+    # and it lives inside _sendRawAudio (before the empty-composer fallback).
+    idx = _BOOT_JS.index("async function _sendRawAudio")
+    end = _BOOT_JS.index("function _commitTranscript", idx)
+    body = _BOOT_JS[idx:end]
+    assert "window._micPendingSend" in body and "send()" in body
