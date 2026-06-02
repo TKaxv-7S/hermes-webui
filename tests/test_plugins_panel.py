@@ -441,6 +441,45 @@ class TestPluginNameValidation:
         assert "addEventListener('click'" in seg
         assert "addEventListener('change'" in seg
 
+    def test_asset_route_only_serves_built_assets_not_source_or_config(self):
+        # serve_plugin_static must NOT expose plugin source/config that lives in
+        # the dashboard/ root (plugin_api.py, manifest.json) or dotfiles/source
+        # under dist/ — only built static assets.
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        import api.plugins as plugins
+
+        with tempfile.TemporaryDirectory() as td:
+            prev = os.environ.get("HERMES_WEBUI_PLUGINS_DIR")
+            os.environ["HERMES_WEBUI_PLUGINS_DIR"] = td
+            try:
+                root = Path(td) / "tplug" / "dashboard"
+                (root / "dist").mkdir(parents=True)
+                (root / "manifest.json").write_text(json.dumps({"name": "tplug", "tab": {"path": "/tplug"}}), encoding="utf-8")
+                (root / "plugin_api.py").write_text("SECRET = 'x'", encoding="utf-8")
+                (root / "dist" / "app.js").write_text("console.log(1)", encoding="utf-8")
+                (root / "dist" / ".env").write_text("SECRET=x", encoding="utf-8")
+                (root / "dist" / "config.py").write_text("SECRET='x'", encoding="utf-8")
+                plugins.PLUGIN_MANIFESTS.clear()
+                plugins._PLUGIN_STATIC_ROOTS.clear()
+                plugins.load_plugins()
+                # Source / config / dotfiles → blocked.
+                assert plugins.serve_plugin_static("tplug", "plugin_api.py") is None
+                assert plugins.serve_plugin_static("tplug", "manifest.json") is None
+                assert plugins.serve_plugin_static("tplug", "dist/.env") is None
+                assert plugins.serve_plugin_static("tplug", "dist/config.py") is None
+                # Built static asset → served.
+                assert plugins.serve_plugin_static("tplug", "dist/app.js") is not None
+            finally:
+                plugins.PLUGIN_MANIFESTS.clear()
+                plugins._PLUGIN_STATIC_ROOTS.clear()
+                if prev is None:
+                    os.environ.pop("HERMES_WEBUI_PLUGINS_DIR", None)
+                else:
+                    os.environ["HERMES_WEBUI_PLUGINS_DIR"] = prev
+
 
 class TestPluginCollisionDetection:
     """Tests for plugin name and tab.path collision detection."""

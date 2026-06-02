@@ -98,9 +98,15 @@ def load_plugins() -> None:
 
 def serve_plugin_static(plugin_name: str, rel_path: str) -> tuple[bytes, str] | None:
     """
-    Serve a static file from a plugin's dist/ directory.
+    Serve a built static asset from a plugin's dashboard/dist/ (or static/) dir.
 
     Returns (file_bytes, content_type) on success, None on not found.
+
+    Security: _PLUGIN_STATIC_ROOTS points at the plugin's whole dashboard/ dir
+    (the page route needs that), but the asset route must NOT expose plugin
+    source/config — e.g. dashboard/plugin_api.py, manifest.json, .env. So we
+    constrain served files to the built-asset subtrees (dist/ or static/), reject
+    dotfiles, and require a known static extension.
     """
     root = _PLUGIN_STATIC_ROOTS.get(plugin_name)
     if not root:
@@ -112,11 +118,29 @@ def serve_plugin_static(plugin_name: str, rel_path: str) -> tuple[bytes, str] | 
     except ValueError:
         return None  # path traversal attempt
 
+    # Only built-asset subtrees are servable (not the dashboard root itself,
+    # which holds plugin_api.py / manifest.json / config).
+    rel = safe.relative_to(root)
+    if not rel.parts or rel.parts[0] not in ("dist", "static"):
+        return None
+    # No dotfiles (.env, .git, etc.) anywhere in the path.
+    if any(part.startswith(".") for part in rel.parts):
+        return None
+
     if not safe.is_file():
         return None
 
-    data = safe.read_bytes()
+    # Allowlist of static asset extensions — refuse source/config (.py, .json,
+    # .toml, .env, .sh, ...) even if somehow placed under dist/.
     ext = os.path.splitext(rel_path.lower())[1]
+    _STATIC_EXTS = {
+        ".js", ".css", ".html", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+        ".ico", ".webp", ".woff", ".woff2", ".ttf", ".otf", ".map", ".txt",
+    }
+    if ext not in _STATIC_EXTS:
+        return None
+
+    data = safe.read_bytes()
     content_type = {
         ".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8",
