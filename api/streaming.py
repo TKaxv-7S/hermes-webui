@@ -3111,14 +3111,25 @@ def _merge_display_messages_after_agent_result(previous_display, previous_contex
     # match are context-only gaps that get spliced in before the display msg.
     if previous_display and previous_context:
         _display_id_set = {_message_identity(m) for m in previous_display}
-        _context_id_set = {_message_identity(m) for m in previous_context}
+        _context_id_set = {
+            _message_identity(m)
+            for m in previous_context
+            if not _is_context_compression_marker(m)
+        }
         _has_context_only_turns = bool(_context_id_set - _display_id_set)
         if _has_context_only_turns:
             context_keys = [_message_identity(m) for m in previous_context]
             _backfilled = []
-            _emitted = set()
+            # #3300 fix: track ONLY context rows we splice in, so the
+            # visible-display backbone is never suppressed. Sharing one set
+            # between context inserts and display rows (and _message_identity
+            # ignoring timestamps) dropped a legitimate second identical visible
+            # user turn. Display rows are always appended in order; a context
+            # row is backfilled only if it isn't already a display row and
+            # hasn't already been inserted.
+            _context_inserted = set()
             _cursor = 0
-            for _dmsg in previous_display:
+            for _display_idx, _dmsg in enumerate(previous_display):
                 _dkey = _message_identity(_dmsg)
                 if _dkey is not None:
                     _j = _cursor
@@ -3128,21 +3139,32 @@ def _merge_display_messages_after_agent_result(previous_display, previous_contex
                         for _k in range(_cursor, _j):
                             _ckey = context_keys[_k]
                             _cmsg = previous_context[_k]
-                            if _ckey is not None and _ckey not in _emitted and not _is_context_compression_marker(_cmsg):
+                            if _ckey is not None and _ckey not in _context_inserted and _ckey not in _display_id_set and not _is_context_compression_marker(_cmsg):
                                 _backfilled.append(copy.deepcopy(_cmsg))
-                                _emitted.add(_ckey)
+                                _context_inserted.add(_ckey)
                         _cursor = _j + 1
-                if _dkey not in _emitted:
-                    _backfilled.append(_dmsg)
-                    if _dkey is not None:
-                        _emitted.add(_dkey)
+                    elif not any(
+                        _message_identity(_future_dmsg) in context_keys[_cursor:]
+                        for _future_dmsg in previous_display[_display_idx + 1:]
+                    ):
+                        for _k in range(_cursor, len(context_keys)):
+                            _ckey = context_keys[_k]
+                            _cmsg = previous_context[_k]
+                            if _ckey is not None and _ckey not in _context_inserted and _ckey not in _display_id_set and not _is_context_compression_marker(_cmsg):
+                                _backfilled.append(copy.deepcopy(_cmsg))
+                                _context_inserted.add(_ckey)
+                        _cursor = len(context_keys)
+                # The display row is the visible backbone — always preserve it,
+                # in order, even when an earlier (identical-content) turn or a
+                # backfilled context row shares its timestamp-less identity.
+                _backfilled.append(_dmsg)
             while _cursor < len(context_keys):
                 _ckey = context_keys[_cursor]
                 _cmsg = previous_context[_cursor]
                 _cursor += 1
-                if _ckey is not None and _ckey not in _emitted and not _is_context_compression_marker(_cmsg):
+                if _ckey is not None and _ckey not in _context_inserted and _ckey not in _display_id_set and not _is_context_compression_marker(_cmsg):
                     _backfilled.append(copy.deepcopy(_cmsg))
-                    _emitted.add(_ckey)
+                    _context_inserted.add(_ckey)
             if len(_backfilled) > len(previous_display):
                 logger.debug(
                     "Backfilled %d context-only turns into previous_display (was %d, now %d)",
