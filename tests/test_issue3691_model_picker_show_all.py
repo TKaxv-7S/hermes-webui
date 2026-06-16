@@ -307,11 +307,33 @@ function makeSelect(groups, selectedValue) {
 }
 
 function snapshot(dd) {
-  return dd.children.map(node => ({
-    className: node.className,
-    textContent: node.textContent,
-    html: node._innerHTML || '',
-  }));
+  // Recurse into collapsible group bodies (#4279): rows + the show-all expander
+  // now live inside `.model-group-body` wrappers rather than as direct children
+  // of the dropdown, so a flat children map would miss them.
+  const out = [];
+  const walk = (node) => {
+    for (const child of (node.children || [])) {
+      out.push({
+        className: child.className,
+        textContent: child.textContent,
+        html: child._innerHTML || '',
+      });
+      if (child.children && child.children.length) walk(child);
+    }
+  };
+  walk(dd);
+  return out;
+}
+
+// Find a node anywhere in the dropdown subtree whose innerHTML matches.
+function findInTree(dd, pred) {
+  const stack = [...(dd.children || [])];
+  while (stack.length) {
+    const n = stack.shift();
+    if (pred(n)) return n;
+    if (n.children && n.children.length) stack.push(...n.children);
+  }
+  return null;
 }
 
 const payload = JSON.parse(process.argv[3]);
@@ -353,7 +375,9 @@ for (const name of [
 
 renderModelDropdown();
 const initial = snapshot(dropdown);
-const initialShowAllRow = dropdown.children.find(node => String(node._innerHTML || '').includes('Show all'));
+// The show-all expander now lives inside a `.model-group-body` wrapper (#4279),
+// so search the whole subtree rather than only direct children.
+const initialShowAllRow = findInTree(dropdown, node => String(node._innerHTML || '').includes('Show all'));
 const searchInput = dropdown.children[1].querySelector('.model-search-input');
 searchInput.value = payload.searchTerm;
 searchInput._listeners.input();
@@ -470,14 +494,20 @@ def test_runtime_picker_preserves_backend_decorated_nous_heading_without_double_
     assert "Nous (2 of 4)" in heading_text, (
         "The picker should preserve the backend-crafted Nous heading verbatim when overflow exists."
     )
-    # Regression (#3691 row-chip leak): the per-row provider chip must show the PLAIN
-    # provider label, never the "(N of M)" overflow count — otherwise the count is
-    # repeated on every row and reads as nonsense after "Show all" expands the group.
+    # Regression (#3691 row-chip leak): the per-row provider chip must NEVER carry
+    # the "(N of M)" overflow count. As of the collapsible-groups UX pass, the
+    # per-row provider chip is also suppressed entirely when a row sits under its
+    # own provider heading (the heading already names the provider, so repeating it
+    # on every row is pure noise) — the chip is kept only for hoisted/search rows.
     assert "(2 of 4)" not in row_html, (
         "The per-row provider chip must not carry the overflow count; it belongs on the heading only."
     )
-    assert 'class="model-opt-provider">Nous<' in row_html, (
-        "Each row's provider chip should render the plain provider label (e.g. 'Nous')."
+    assert 'class="model-opt-provider">Nous (2 of 4)<' not in row_html, (
+        "A row chip must never show the decorated overflow label."
+    )
+    # Under its own provider heading, rows carry NO redundant provider chip.
+    assert 'class="model-opt-provider"' not in row_html, (
+        "Rows under their own provider heading should not repeat the provider chip (de-noise UX)."
     )
     # After expand, the heading must not double-count ("Nous (2 of 4) (4)") — it should
     # strip the backend decoration and show the plain rendered-row count. (#3691)

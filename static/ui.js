@@ -2174,6 +2174,17 @@ function renderModelDropdown(){
   const dd=$('composerModelDropdown');
   const sel=$('modelSelect');
   if(!dd||!sel) return;
+  // Group(s) that must render OPEN even though they aren't the selected group —
+  // set when the user expands a group's overflow via "Show more" so a later full
+  // re-render doesn't re-collapse it (_groupOpenState is rebuilt per render, so
+  // this cross-render intent persists on a global). Resolved as a function-local
+  // so renderModelDropdown stays self-contained when eval'd in isolation (the
+  // #3691 node test driver evals the function body without module scope).
+  const _forceOpenGroups=(()=>{
+    const _g=(typeof window!=='undefined')?window:(typeof globalThis!=='undefined'?globalThis:{});
+    if(!_g.__modelGroupForceOpen) _g.__modelGroupForceOpen=new Set();
+    return _g.__modelGroupForceOpen;
+  })();
   const _modelData=[];
   const _groupMeta=new Map();
   const _groupOrder=[];
@@ -2286,32 +2297,145 @@ function renderModelDropdown(){
     }
     return 500;
   };
-  const _renderProviderEndpointHint=(entry)=>{
+  const _renderProviderEndpointHint=(entry,parent)=>{
     if(!entry||!entry.label||!entry.modelsEndpointError) return;
     const hint=document.createElement('div');
     hint.className='model-provider-hint';
     hint.textContent=entry.modelsEndpointError.message||'Models endpoint could not be reached for this provider.';
-    dd.appendChild(hint);
+    (parent||dd).appendChild(hint);
+  };
+  // Build a single model-option row (mirrors the main render loop's row markup),
+  // used both by the main render and by the in-place overflow reveal below.
+  const _buildModelRow=(m,sel,withProviderChip)=>{
+    const row=document.createElement('div');
+    row.className='model-opt'+(m.value===sel.value?' active':'');
+    const badgeHtml=m.badge?`<span class="model-opt-badge model-opt-badge--${esc(m.badge.role||'configured')}">${esc(m.badge.label||'Configured')}</span>`:'';
+    const _plainGroup=m.group?String(m.group).replace(/\s*\(\d+\s+of\s+\d+\)\s*$/,''):'';
+    const providerChip=(_plainGroup&&withProviderChip)?`<span class="model-opt-provider">${esc(_plainGroup)}</span>`:'';
+    row.innerHTML=`<div class="model-opt-top"><span class="model-opt-name">${esc(m.name)}</span>${badgeHtml}${providerChip}</div><span class="model-opt-id">${esc(m.id)}</span>`;
+    row.onclick=()=>selectModelFromDropdown(m.value,m.providerId||(m.badge&&m.badge.provider)||null);
+    return row;
   };
   const _expandOverflowGroup=(groupMetaEntry)=>{
     if(!groupMetaEntry||!groupMetaEntry.optgroup) return;
-    const currentTerm=_si.value;
-    const extraModels=_readModelOverflowData(groupMetaEntry.optgroup);
-    if(!_appendOverflowOptionsToGroup(groupMetaEntry.optgroup,extraModels)) return;
-    renderModelDropdown();
-    const nextSearch=dd.querySelector('.model-search-input');
-    if(!nextSearch) return;
-    nextSearch.value=currentTerm;
-    if(nextSearch._listeners&&typeof nextSearch._listeners.input==='function'){
-      nextSearch._listeners.input();
+    const og=groupMetaEntry.optgroup;
+    const groupKey=groupMetaEntry.key;
+    const extraModels=_readModelOverflowData(og);
+    // Nothing to reveal — no overflow tail advertised.
+    if(!extraModels.length) return;
+    // Append the overflow models to the source <select> so the dropdown's state
+    // stays the source of truth (search, re-render, selection all see them).
+    // NOTE: guard on extraModels.length (above), NOT on the append return value —
+    // _appendOverflowOptionsToGroup returns the count of NEWLY-created <option>s
+    // and returns 0 (while still clearing dataset.extraModels) when every overflow
+    // model already existed as an option. Bailing on a 0 return would leave those
+    // already-present-but-hidden rows unrevealed and the expander dead (#bug3).
+    _appendOverflowOptionsToGroup(og,extraModels);
+    // Full re-render fallback — the proven path. Used when the in-place reveal
+    // can't run (minimal/headless DOM without CSS.escape/rAF/insertBefore, or any
+    // unexpected failure). Produces the same end state: overflow appended,
+    // expander gone, search term reapplied.
+    const _fullReRender=()=>{
+      const _term=(_si&&_si.value)||'';
+      renderModelDropdown();
+      const ns=dd.querySelector('.model-search-input');
+      if(ns){ ns.value=_term; (ns._listeners&&ns._listeners.input)?ns._listeners.input():ns.dispatchEvent(new Event('input')); }
+    };
+    // IN-PLACE reveal: build the newly-revealed rows and insert them directly into
+    // the existing group wrapper (before the "Show more" expander), then remove
+    // the expander. No full re-render — so the group stays open, every other
+    // group keeps its collapsed/open state, and the scroll position is preserved.
+    // The user lands on the first new row. Falls back to a full re-render if the
+    // runtime lacks the DOM APIs this needs.
+    const _canInPlace = typeof CSS!=='undefined' && CSS && typeof CSS.escape==='function'
+      && typeof dd.querySelector==='function';
+    if(!_canInPlace){ _fullReRender(); return; }
+    let wrap, moreEl;
+    try{
+      wrap=dd.querySelector(`.model-group-body[data-group="${CSS.escape(groupKey)}"]`);
+      moreEl=wrap?wrap.querySelector('.model-opt-more'):null;
+    }catch(_){ _fullReRender(); return; }
+    if(!wrap||!moreEl||typeof wrap.insertBefore!=='function'){
+      _fullReRender();
       return;
     }
-    if(typeof nextSearch.dispatchEvent==='function'){
-      nextSearch.dispatchEvent(new Event('input'));
+    try{
+      const _plainLabel=String(groupMetaEntry.label||'').replace(/\s*\(\d+\s+of\s+\d+\)\s*$/,'');
+      const _alreadyShown=new Set(Array.from(wrap.querySelectorAll('.model-opt .model-opt-id')).map(el=>el.textContent));
+      let firstNewRow=null;
+      for(const m of extraModels){
+        if(!m||!m.id) continue;
+        if(_alreadyShown.has(esc(m.id))) continue;
+        const row=_buildModelRow({value:m.id,name:m.label||m.id,id:m.id,group:_plainLabel,groupKey,providerId:(og.dataset&&og.dataset.provider)||''},$('modelSelect'),false);
+        wrap.insertBefore(row,moreEl);
+        if(!firstNewRow) firstNewRow=row;
+      }
+      // Sync the in-memory model data so a later _filterModels() re-render (e.g.
+      // after a search is typed and cleared) keeps the group fully expanded
+      // instead of snapping back to the capped view + a fresh "Show more". The
+      // overflow rows were just appended to the live <select>, so flip their
+      // _modelData entries to no-longer-hidden and zero the group's hidden count.
+      for(const _md of _modelData){
+        if(_md && _md.groupKey===groupKey && _md.hiddenByDefault){
+          _md.hiddenByDefault=false;
+        }
+      }
+      if(groupMetaEntry && typeof groupMetaEntry.hiddenCount==='number'){
+        groupMetaEntry.hiddenCount=0;
+      }
+      // The group is now fully expanded — drop the "Show more" expander, and bump
+      // the heading count to the full total. Also force the group OPEN (the user
+      // just asked to see more of it) regardless of any prior collapsed state.
+      moreEl.remove();
+      wrap.style.display='';
+      _forceOpenGroups.add(groupKey);
+      const heading=wrap.previousElementSibling;
+      if(heading&&heading.classList&&heading.classList.contains('model-group')){
+        const _total=wrap.querySelectorAll('.model-opt').length;
+        heading.textContent=_total>1?`${_plainLabel} (${_total})`:_plainLabel;
+        heading.classList.add('collapsible','open');
+      }
+      // Scroll so the first newly-revealed row sits near the top of the dropdown
+      // viewport — the user asked to "land on the new models" after Show more,
+      // not be reset to the top of the list and not have it jump unpredictably.
+      if(firstNewRow && typeof firstNewRow.offsetTop==='number' && typeof requestAnimationFrame==='function'){
+        const _targetTop=Math.max(0,firstNewRow.offsetTop-48);
+        const _doScroll=()=>{ try{ dd.scrollTop=_targetTop; }catch(_){} };
+        _doScroll();                                   // immediate
+        requestAnimationFrame(()=>{ _doScroll(); requestAnimationFrame(_doScroll); });
+        if(typeof setTimeout==='function') setTimeout(_doScroll,80); // after any refocus settles
+      }
+    }catch(_err){
+      // Any unexpected DOM failure — fall back to the proven full re-render so
+      // the overflow still gets revealed.
+      _fullReRender();
     }
   };
+  // Collapsible group state — persists across _filterModels calls
+  const _groupOpenState={};
+  let _prevHasSearch=false;  // tracks search->empty transition to reset open-state
+  let _groupWrappers={};
+  // The group that owns the currently-selected model. Groups start COLLAPSED by
+  // default (#4279); the selected provider's group is the one exception so the
+  // user always sees their active model without expanding anything. (#4279 + UX)
+  const _selectedGroupKey=(()=>{
+    const _selVal=String((sel&&sel.value)||'');
+    if(!_selVal) return null;
+    const _hit=_modelData.find(m=>m&&!m.endpointErrorOnly&&String(m.value||'')===_selVal);
+    return _hit?_hit.groupKey:null;
+  })();
   const _filterModels=(term)=>{
     term=term.trim().toLowerCase();
+    const hasSearch=!!term;
+    // On a fresh search, expand all groups so every match is visible (#collapse).
+    if(hasSearch) for(const k in _groupOpenState) _groupOpenState[k]=true;
+    // When a search is CLEARED (search -> empty), reset the per-group open state
+    // so the collapsed-except-selected default re-applies — otherwise every group
+    // the search auto-expanded would stay open, defeating the collapse UX. Groups
+    // the user explicitly expanded via "Show more" (_forceOpenGroups) and the
+    // selected group remain open through the defaulting logic below.
+    else if(_prevHasSearch){ for(const k in _groupOpenState) delete _groupOpenState[k]; }
+    _prevHasSearch=hasSearch;
     const found=new Set();
     for(const m of _modelData){
       const name=m.name.toLowerCase();
@@ -2420,7 +2544,37 @@ function renderModelDropdown(){
         const _plainLabel=String(meta.label||'').replace(/\s*\(\d+\s+of\s+\d+\)\s*$/,'');
         heading.textContent=count>1?`${_plainLabel} (${count})`:meta.label;
         dd.appendChild(heading);
-        _renderProviderEndpointHint(meta);
+        const wrapper=document.createElement('div');
+        wrapper.className='model-group-body';
+        wrapper.dataset.group=groupKey;
+        // A group carrying a provider endpoint-error hint (#4253) must stay
+        // visible by default — otherwise the "models endpoint unreachable"
+        // warning is hidden inside a collapsed body and the user never sees it.
+        const _hasEndpointError=!!(meta&&(meta.modelsEndpointError||meta.endpointErrorOnly));
+        if(hasSearch) _groupOpenState[groupKey]=true;
+        else if(_forceOpenGroups.has(groupKey)) _groupOpenState[groupKey]=true;
+        else if(_hasEndpointError) _groupOpenState[groupKey]=true;
+        else if(!(groupKey in _groupOpenState)) _groupOpenState[groupKey]=(groupKey===_selectedGroupKey);
+        if(!_groupOpenState[groupKey]) wrapper.style.display='none';
+        else heading.classList.add('open');
+        heading.classList.add('collapsible');
+        dd.appendChild(wrapper);
+        _groupWrappers[groupKey]=wrapper;
+        // Render endpoint error hint inside the collapsible group (#4253)
+        _renderProviderEndpointHint(meta,wrapper);
+        heading.addEventListener('click',(e)=>{
+          e.stopPropagation();
+          const w=dd.querySelector(`.model-group-body[data-group="${CSS.escape(groupKey)}"]`);
+          if(!w) return;
+          const closed=w.style.display==='none';
+          w.style.display=closed?'':'none';
+          _groupOpenState[groupKey]=closed;
+          // Keep the cross-render force-open intent in sync with manual toggles:
+          // collapsing a previously overflow-expanded group should let it
+          // re-collapse on the next render too.
+          if(closed) _forceOpenGroups.add(groupKey); else _forceOpenGroups.delete(groupKey);
+          heading.classList.toggle('open',closed);
+        });
       }
       for(const m of groupRows){
         const row=document.createElement('div');
@@ -2431,27 +2585,46 @@ function renderModelDropdown(){
         // the count is stamped redundantly on every row and reads as nonsense after
         // "Show all" expands the group (e.g. row 30 still showing "(15 of 30)"). (#3691)
         const _plainGroup=m.group?String(m.group).replace(/\s*\(\d+\s+of\s+\d+\)\s*$/,''):'';
-        const providerChip=_plainGroup?`<span class="model-opt-provider">${esc(_plainGroup)}</span>`:'';
+        // Only show the per-row provider chip when the row is NOT already under its
+        // own provider heading — i.e. it's a flat/hoisted row appended straight to
+        // the dropdown (no group wrapper). Repeating the provider name on every row
+        // beneath its own "PROVIDER" heading is pure visual noise. The chip still
+        // orients hoisted/configured rows and search results that render flat.
+        const _underOwnHeading=shouldRenderHeading&&!!(m.groupKey&&_groupWrappers[m.groupKey]);
+        const providerChip=(_plainGroup&&!_underOwnHeading)?`<span class="model-opt-provider">${esc(_plainGroup)}</span>`:'';
         row.innerHTML=`<div class="model-opt-top"><span class="model-opt-name">${esc(m.name)}</span>${badgeHtml}${providerChip}</div><span class="model-opt-id">${esc(m.id)}</span>`;
         row.onclick=()=>selectModelFromDropdown(m.value,m.providerId||(m.badge&&m.badge.provider)||null);
-        dd.appendChild(row);
+        if(m.groupKey&&_groupWrappers[m.groupKey]){
+          _groupWrappers[m.groupKey].appendChild(row);
+        }else{
+          dd.appendChild(row);
+        }
       }
       if(!term&&hiddenCount){
         const showAll=document.createElement('div');
-        showAll.className='model-opt model-opt-show-all';
+        showAll.className='model-opt-more';
         showAll.tabIndex=0;
-        showAll.innerHTML=`<div class="model-opt-top"><span class="model-opt-name">${esc(t('model_show_all_models',hiddenCount)||`Show all ${hiddenCount} models`)}</span></div>`;
+        showAll.setAttribute('role','button');
+        const _moreLabel=esc(t('model_show_all_models',hiddenCount)||`Show ${hiddenCount} more`);
+        showAll.innerHTML=`<span class="model-opt-more-chevron" aria-hidden="true"></span><span class="model-opt-more-label">${_moreLabel}</span>`;
+        const _doExpand=()=>{
+          // The reveal itself (in-place row insert + open + scroll-to-new) is
+          // handled by _expandOverflowGroup; just trigger it.
+          _expandOverflowGroup(meta);
+        };
         showAll.onclick=(e)=>{
           if(e&&typeof e.stopPropagation==='function') e.stopPropagation();
-          _expandOverflowGroup(meta);
+          _doExpand();
         };
         showAll.addEventListener('keydown',e=>{
           if(e.key==='Enter'||e.key===' '){
             e.preventDefault();
-            _expandOverflowGroup(meta);
+            _doExpand();
           }
         });
-        dd.appendChild(showAll);
+        // Keep the expander inside the collapsible group so it hides/shows with it.
+        if(_groupWrappers[groupKey]) _groupWrappers[groupKey].appendChild(showAll);
+        else dd.appendChild(showAll);
       }
     }
     if(term&&found.size===0){
@@ -2467,7 +2640,7 @@ function renderModelDropdown(){
   };
   _si.addEventListener('input',()=>_filterModels(_si.value));
   // Keyboard navigation through filtered model rows (#2791).
-  const _visibleModelRows=()=>Array.from(dd.querySelectorAll('.model-opt'));
+  const _visibleModelRows=()=>Array.from(dd.querySelectorAll('.model-opt,.model-opt-more')).filter(el=>!el.closest('.model-group-body')||el.closest('.model-group-body').style.display!=='none');
   const _activeRowIndex=(rows)=>rows.findIndex(r=>r.classList.contains('is-highlighted'));
   const _highlightRow=(rows,idx)=>{
     for(const r of rows) r.classList.remove('is-highlighted');
