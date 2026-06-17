@@ -156,6 +156,18 @@ function syncAppTitlebar() {
 function _beginSettingsPanelSession() {
   _settingsIndex = null;
   _settingsIndexPromise = null;
+  // Invalidate any in-flight search render from a PRIOR Settings session and
+  // reset the search UI, so a slow index build that resolves after the panel
+  // was closed/reopened can't paint stale results into the dropdown. #4340
+  // review fix (filterSettings() bails when its captured seq != current).
+  ++_settingsSearchSeq;
+  const _searchInput = $('settingsSearch');
+  if (_searchInput) _searchInput.value = '';
+  const _searchResults = $('settingsSearchResults');
+  if (_searchResults) {
+    _searchResults.style.display = 'none';
+    _searchResults.innerHTML = '';
+  }
   _settingsDirty = false;
   _settingsThemeOnOpen = localStorage.getItem('hermes-theme') || 'dark';
   _settingsSkinOnOpen = localStorage.getItem('hermes-skin') || 'default';
@@ -170,6 +182,9 @@ function _beginSettingsPanelSession() {
     _settingsSearchDismissListenerRegistered = true;
     document.addEventListener('click', e => {
       if (!e.target.closest('#settingsMenu')) {
+        // Invalidate an in-flight first-build too, so it can't resurrect the
+        // dropdown after an outside-click dismiss. #4340 review fix.
+        ++_settingsSearchSeq;
         const r = $('settingsSearchResults');
         if (r) {
           r.style.display = 'none';
@@ -6219,10 +6234,16 @@ async function _buildSettingsIndex() {
       const pane = $(paneId);
       if (!pane) continue;
       pane.querySelectorAll('.settings-field').forEach(field => {
-        const labelEl = field.querySelector('label[data-i18n]');
+        // The i18n key may live on the <label> itself (label[data-i18n]) OR on
+        // a child of the label — the common toggle shape is
+        // <label><input><span data-i18n="..."></span></label>. Match both, plus
+        // a plain <label> with no i18n key, so every field is searchable
+        // (previously only label[data-i18n] indexed, silently dropping most
+        // checkbox settings). #4340 review fix.
+        const labelEl = field.querySelector('label[data-i18n], label [data-i18n], label');
         if (!labelEl) return;
-        const i18nKey = labelEl.dataset.i18n;
-        const label = t(i18nKey) || labelEl.textContent.trim();
+        const i18nKey = labelEl.dataset ? labelEl.dataset.i18n : undefined;
+        const label = (i18nKey && t(i18nKey)) || labelEl.textContent.trim();
         if (label) index.push({ label, sectionKey, i18nKey, el: field });
       });
       if (sectionKey === 'providers') {
@@ -6339,8 +6360,11 @@ function _resolveSettingsField(entry) {
       return card;
     }
   }
+  // The i18n key may sit on the label or on a child of it (span inside a
+  // toggle label), so resolve via any [data-i18n] node, then climb to the
+  // enclosing .settings-field. #4340 review fix.
   const labelEl = pane && entry.i18nKey
-    ? pane.querySelector(`label[data-i18n="${CSS.escape(entry.i18nKey)}"]`)
+    ? pane.querySelector(`[data-i18n="${CSS.escape(entry.i18nKey)}"]`)
     : null;
   const live = labelEl && labelEl.closest('.settings-field');
   if (live) return live;

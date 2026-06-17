@@ -195,3 +195,58 @@ class TestSettingsSearch:
         assert "esc(" in body, (
             "filterSettings must use esc() for HTML escaping of all rendered text"
         )
+
+
+class TestSettingsSearchReviewFixes:
+    """Regression coverage for the #4340 review fixes (Codex+Opus)."""
+
+    def test_index_covers_toggle_label_shapes(self):
+        """The field index must catch the common toggle shape
+        <label><input><span data-i18n='...'></span></label>, not just
+        label[data-i18n]. Otherwise most checkbox settings are unsearchable."""
+        idx = PANELS_JS.find("function _buildSettingsIndex")
+        assert idx >= 0, "_buildSettingsIndex not found"
+        body = PANELS_JS[idx:idx + 1600]
+        assert "label[data-i18n], label [data-i18n], label" in body, (
+            "field index query must include 'label [data-i18n]' (span-in-label) "
+            "and plain 'label' so toggle settings are searchable"
+        )
+
+    def test_resolver_finds_data_i18n_anywhere(self):
+        """_resolveSettingsField must resolve a [data-i18n] node anywhere (not
+        only on the <label>) back to its .settings-field."""
+        idx = PANELS_JS.find("function _resolveSettingsField")
+        assert idx >= 0, "_resolveSettingsField not found"
+        body = PANELS_JS[idx:idx + 2200]
+        assert "[data-i18n=" in body and "CSS.escape(entry.i18nKey)" in body, (
+            "_resolveSettingsField must query any [data-i18n] node, not "
+            "label[data-i18n] only"
+        )
+        assert "label[data-i18n=" not in body, (
+            "_resolveSettingsField must NOT restrict the lookup to label[data-i18n]"
+        )
+
+    def test_panel_session_invalidates_stale_search(self):
+        """_beginSettingsPanelSession must bump the search seq and clear the
+        input + results so a stale in-flight render from a prior session can't
+        paint into the dropdown."""
+        idx = PANELS_JS.find("function _beginSettingsPanelSession")
+        assert idx >= 0, "_beginSettingsPanelSession not found"
+        body = PANELS_JS[idx:idx + 900]
+        assert "++_settingsSearchSeq" in body, (
+            "_beginSettingsPanelSession must bump _settingsSearchSeq to "
+            "invalidate in-flight searches"
+        )
+        assert "settingsSearch" in body and "value = ''" in body, (
+            "_beginSettingsPanelSession must clear the search input"
+        )
+
+    def test_dismiss_handler_invalidates_inflight_build(self):
+        """The outside-click dismiss must also invalidate an in-flight first
+        build so it can't resurrect the dismissed dropdown."""
+        idx = PANELS_JS.find("_settingsSearchDismissListenerRegistered = true")
+        assert idx >= 0, "dismiss listener registration not found"
+        body = PANELS_JS[idx:idx + 500]
+        assert "++_settingsSearchSeq" in body, (
+            "the outside-click dismiss handler must bump _settingsSearchSeq"
+        )
