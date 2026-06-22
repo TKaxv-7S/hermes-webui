@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.591] — 2026-06-22 — Release UX (stop transcript jumping to first message on completion)
+
+### Fixed
+
+- **The transcript no longer jumps to the first message after every completion.** On a long conversation that loaded truncated, finishing a turn snapped the viewport to the top. The `done` event replaced the transcript with the full payload and expanded the render window to all messages, but left `_oldestIdx` stale — so the absolute scroll anchor (introduced with the read-position work) resolved to the wrong row and the view jumped to the start. The completion handler now resets `_oldestIdx` from the payload exactly like the other full-load paths, keeping the reader anchored where they were. Pinned-at-bottom readers still follow to the latest message. (#4720)
+
 ## [v0.51.590] — 2026-06-22 — Release UW (close cross-profile credential leak on /api/providers + /api/models)
 
 ### Fixed
