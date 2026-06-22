@@ -96,6 +96,38 @@ class TestSwitchWiring:
             "both switch branches must clear a stranded workspace skeleton"
         )
 
+    def test_switch_post_suppresses_generic_timeout_toast(self):
+        # @rodboev review #4662: the switch POST must pass timeoutToast:false so
+        # api()'s generic "Request timed out" toast can't fire for a superseded or
+        # transient-but-eventually-successful switch. Failures surface only through
+        # the generation-guarded catch handler, which is the single source of truth.
+        body = _switch_body()
+        post_idx = body.index("/api/profile/switch")
+        # The same api(...) call expression that targets /api/profile/switch must
+        # carry timeoutToast: false. Scope to a small window around the call.
+        window = body[post_idx - 200: post_idx + 200]
+        assert "timeoutToast: false" in window or "timeoutToast:false" in window.replace(" ", ""), (
+            "the /api/profile/switch POST must suppress the generic timeout toast"
+        )
+
+    def test_in_progress_branch_reguards_after_list_render(self):
+        # @rodboev/greptile review #4662: the sessionInProgress branch awaits
+        # renderSessionList(); without a generation re-check after that await a
+        # rapid second switch could have its workspace skeleton cleared / a stale
+        # toast popped by the slower earlier switch. Mirror the no-messages guard.
+        body = _switch_body()
+        guard = "if (_switchGen !== _profileSwitchGeneration) return;"
+        # Inside the sessionInProgress branch: locate its "await renderSessionList()"
+        # then the profile_switched_new_conversation toast; a guard must sit between.
+        new_toast_idx = body.index("profile_switched_new_conversation")
+        list_render_before = body.rfind("await renderSessionList();", 0, new_toast_idx)
+        assert list_render_before != -1
+        guard_between = body.find(guard, list_render_before, new_toast_idx)
+        assert guard_between != -1, (
+            "the in-progress switch branch must re-check the switch generation "
+            "after its awaited renderSessionList()"
+        )
+
 
 class TestSessionsWiring:
     def test_skeleton_flag_cleared_on_real_render(self):
@@ -153,6 +185,19 @@ class TestSkeletonCss:
         assert "@keyframes skeletonSheen" in CSS
         assert "@keyframes skeletonFadeIn" in CSS
         assert "animation:skeletonSheen" in CSS.replace(" ", "")
+
+    def test_group_label_fade_settles_at_dim_opacity(self):
+        # @rodboev/greptile review #4662: the shared skeletonFadeIn ends at
+        # opacity:1 with fill-mode:both, which would override the group label's
+        # intended resting opacity:.5 for the whole time the skeleton is up. Labels
+        # must use a dedicated keyframe that ends at .5.
+        compact = CSS.replace(" ", "")
+        assert "@keyframesskeletonFadeInDim{from{opacity:0;}to{opacity:.5;}}" in compact, (
+            "group labels need a dim fade-in that settles at opacity:.5"
+        )
+        assert "skeleton-group-label{animation:skeletonFadeInDim" in compact, (
+            "group labels must use the dim fade-in, not the full-brightness skeletonFadeIn"
+        )
 
     def test_reduced_motion_disables_animation(self):
         # There must be a prefers-reduced-motion block that turns the skeleton

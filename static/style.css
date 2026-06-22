@@ -1240,9 +1240,16 @@
      per-row stagger delay is set inline in JS (showSessionListSkeleton),
      because group-label siblings are interleaved with rows so a CSS
      :nth-child stagger would skip most rows. */
-  .skeleton-row,.skeleton-tree-row,.skeleton-group-label{animation:skeletonFadeIn .22s ease both;}
+  .skeleton-row,.skeleton-tree-row{animation:skeletonFadeIn .22s ease both;}
+  /* Group labels rest at opacity:.5 (see base rule). The shared skeletonFadeIn
+     ends at opacity:1 with fill-mode:both, which would override that resting .5
+     for the full time the skeleton is on screen — so labels get a dedicated
+     fade that ends at .5. The static opacity:.5 on the base rule remains for the
+     reduced-motion path (animation:none) below. (@rodboev/greptile review, #4662) */
+  .skeleton-group-label{animation:skeletonFadeInDim .22s ease both;}
   @keyframes skeletonSheen{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
   @keyframes skeletonFadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes skeletonFadeInDim{from{opacity:0;}to{opacity:.5;}}
   :root{--skeleton-base:color-mix(in srgb,var(--text) 8%,transparent);--skeleton-sheen:color-mix(in srgb,var(--text) 22%,transparent);}
   :root.dark{--skeleton-base:color-mix(in srgb,#fff 6%,transparent);--skeleton-sheen:color-mix(in srgb,#fff 20%,transparent);}
   @media (prefers-reduced-motion:reduce){

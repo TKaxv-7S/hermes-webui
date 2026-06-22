@@ -5950,7 +5950,12 @@ async function switchToProfile(name) {
   );
 
   try {
-    const data = await api('/api/profile/switch', { method: 'POST', body: JSON.stringify({ name }) });
+    // timeoutToast:false — suppress api()'s generic "Request timed out" toast so a
+    // superseded or transient-but-eventually-successful switch can't pop a spurious
+    // red error while the real switch completes and renders. The catch block below is
+    // the single source of truth for switch failure and is gated on _switchGen, so the
+    // error surfaces ONLY when the CURRENT switch genuinely fails (@rodboev review, #4662).
+    const data = await api('/api/profile/switch', { method: 'POST', body: JSON.stringify({ name }), timeoutToast: false });
     if (_switchGen !== _profileSwitchGeneration) return;
     S.activeProfile = data.active || name;
     S.activeProfileIsDefault = !!data.is_default;
@@ -6062,6 +6067,12 @@ async function switchToProfile(name) {
       // new profile-scoped session.
       syncTopbar();
       await renderSessionList();
+      // Re-check generation after the awaited list render: a newer switch can be
+      // started while renderSessionList() is in flight, and without this guard
+      // the superseded switch would clear the newer switch's workspace skeleton
+      // and pop a stale toast. Mirrors the no-messages branch guard below.
+      // (@rodboev/greptile review, #4662)
+      if (_switchGen !== _profileSwitchGeneration) return;
       // Safety net: if the new session has no workspace, newSession() won't have
       // painted the file tree — clear the up-front skeleton so it can't strand
       // (#4662 Opus gate). No-op when a real tree already rendered.
