@@ -5536,6 +5536,7 @@ async function switchToWorkspace(path,name){
     }catch(e){if(typeof setStatus==='function')setStatus(t('switch_failed')+e.message);return;}
     if(!S.session)return;
   }
+  // Workspace mutation during a live turn would desync the active stream context.
   if(S.busy){
     showToast(t('workspace_busy_switch'));
     return;
