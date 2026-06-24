@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [v0.51.626] — 2026-06-24 — Release WG (restore the mobile streaming scroll-jank guard)
+
+### Fixed
+
+- **On iOS Safari / installed PWAs, the transcript no longer jumps to the first/oldest message while assistant output streams.** The mobile scroll-jank protection had three layers — the `overflow-anchor: auto` mobile CSS, the `_fixMobileScrollJank()` helper, and a streaming-time call that re-enables anchoring right before each live DOM write. The streaming-time call was inadvertently dropped during the streaming parse-cache work, so Safari could paint a transient `scrollTop = 0` frame during streamed DOM rebuilds and yank the reader to the top. That third layer is restored (the helper still self-gates to touch devices, so desktop is unaffected), with a regression test so it can't silently disappear again. Thanks @b-yelverton. (#4857)
+
 ## [v0.51.625] — 2026-06-24 — Release WF (cron job model override no longer keeps the @provider: display prefix)
 
 ### Fixed
