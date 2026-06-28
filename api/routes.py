@@ -5219,8 +5219,27 @@ def _read_profile_model_config(
     explicit ``requested_provider`` is already set (profile should not
     override explicit selections).
     """
-    if _clean_session_model_provider(requested_provider) or not getattr(session, "profile", None):
+    if not getattr(session, "profile", None):
         return None, None
+    if _clean_session_model_provider(requested_provider):
+        # Session already carries an explicit provider; still read profile default
+        # so process-wakeup can repair bare model suffixes (#5127).
+        try:
+            from api.profiles import get_hermes_home_for_profile
+            _profile_home = get_hermes_home_for_profile(session.profile)
+            _profile_cfg_path = os.path.join(str(_profile_home), "config.yaml")
+            if not os.path.isfile(_profile_cfg_path):
+                return None, None
+            import yaml
+            with open(_profile_cfg_path, encoding="utf-8") as _f:
+                _pcfg = yaml.safe_load(_f) or {}
+            if not isinstance(_pcfg, dict):
+                return None, None
+            _default = (_pcfg.get("model", {}).get("default") or "").strip() or None
+            return None, _default
+        except Exception:
+            logger.warning("profile provider read failed for %r", getattr(session, "profile", None), exc_info=True)
+            return None, None
     try:
         from api.profiles import get_hermes_home_for_profile
         _profile_home = get_hermes_home_for_profile(session.profile)
@@ -5302,6 +5321,19 @@ def _resolve_compatible_session_model_state(
             and model_prefix == "openai"
         )
         if not explicit_provider and not stale_codex_openai_slash_id:
+            _profile_default = str(profile_default_model or "").strip()
+            if (
+                _profile_default
+                and "/" in _profile_default
+                and "/" not in model
+                and _profile_default.rsplit("/", 1)[-1] == model
+                and requested_provider
+                and (
+                    requested_provider == "custom"
+                    or str(requested_provider).startswith("custom:")
+                )
+            ):
+                return _profile_default, requested_provider, True
             return model, requested_provider, False
 
     # Default (human chat/start) path calls get_available_models() with NO
