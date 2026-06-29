@@ -57,7 +57,7 @@ def test_profile_active_includes_default_workspace_from_resolver(monkeypatch):
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: "/home/u/.hermes/profiles/work")
     monkeypatch.setattr(profiles, "_is_root_profile", lambda name: name in ("default", ""))
     # The resolver is the single source of truth for the workspace value.
-    monkeypatch.setattr(routes, "get_last_workspace", lambda: "/srv/projects/work")
+    monkeypatch.setattr(routes, "get_profile_default_workspace", lambda: "/srv/projects/work")
 
     routes.handle_get(SimpleNamespace(), urlparse("/api/profile/active"))
 
@@ -67,7 +67,7 @@ def test_profile_active_includes_default_workspace_from_resolver(monkeypatch):
     assert payload["is_default"] is False
     assert payload["default_workspace"] == "/srv/projects/work", (
         "GET /api/profile/active must surface the profile-scoped workspace from "
-        "get_last_workspace() so the blank new-chat composer chip shows it (#5169)"
+        "get_profile_default_workspace() so the blank new-chat composer chip shows it (#5169)"
     )
 
 
@@ -158,4 +158,57 @@ def test_profile_active_default_workspace_falls_back_to_config_workspace(monkeyp
     assert payload["default_workspace"] == resolved_cfg_ws, (
         "default_workspace must fall back to config.yaml `workspace` when no "
         "last_workspace.txt exists (mirrors POST /api/profile/switch priority, #5169)"
+    )
+
+
+def test_profile_active_default_workspace_ignores_global_last_workspace(monkeypatch, tmp_path):
+    """The #5169 regression Codex flagged: a GLOBAL last_workspace.txt must NOT
+    leak into a named profile's default_workspace.
+
+    get_last_workspace() falls back to the global _GLOBAL_LW_FILE before reaching
+    the profile config.yaml — so a named profile with NO own last_workspace.txt
+    but WITH a config.yaml `workspace` would have returned the global path,
+    re-introducing exactly the wrong-workspace bug. /api/profile/active now uses
+    get_profile_default_workspace(), which skips the global file: profile-scoped
+    last_workspace.txt -> config.yaml -> terminal.cwd -> default.
+    """
+    base_home = tmp_path / ".hermes"
+    profile_home = base_home / "profiles" / "work"
+    (profile_home / "webui_state").mkdir(parents=True, exist_ok=True)
+
+    # A GLOBAL last_workspace.txt pointing somewhere the named profile must NOT use.
+    global_ws = tmp_path / "global-workspace"
+    global_ws.mkdir(parents=True, exist_ok=True)
+    global_lw = tmp_path / "global-last_workspace.txt"
+    global_lw.write_text(str(global_ws.resolve()), encoding="utf-8")
+
+    # The named profile's OWN configured workspace (config.yaml), which must win.
+    cfg_workspace = tmp_path / "work-config-workspace"
+    cfg_workspace.mkdir(parents=True, exist_ok=True)
+    resolved_cfg_ws = str(cfg_workspace.resolve())
+
+    captured = _capture_j(monkeypatch)
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base_home)
+    monkeypatch.delenv("HERMES_WEBUI_ISOLATED_PROFILE", raising=False)
+    monkeypatch.setattr(profiles, "_INITIAL_ISOLATED_PROFILE_OPT_IN", "")
+    monkeypatch.setattr(workspace, "_remote_terminal_cwd", lambda: None)
+    # The global last-workspace file DOES exist (and is valid) — the named-profile
+    # resolver must still ignore it.
+    monkeypatch.setattr(workspace, "_GLOBAL_LW_FILE", global_lw)
+    # No profile-scoped last_workspace.txt on disk -> resolver consults config.yaml.
+    monkeypatch.setattr(config_mod, "get_config", lambda: {"workspace": resolved_cfg_ws})
+
+    profiles.set_request_profile("work")
+    try:
+        routes.handle_get(SimpleNamespace(), urlparse("/api/profile/active"))
+    finally:
+        profiles.clear_request_profile()
+
+    payload = captured["payload"]
+    assert payload["default_workspace"] == resolved_cfg_ws, (
+        "default_workspace must resolve from the named profile's config.yaml workspace, "
+        "NOT the global last_workspace.txt — the #5169 regression guard"
+    )
+    assert payload["default_workspace"] != str(global_ws.resolve()), (
+        "the global last-workspace path must never leak into a named profile's default_workspace"
     )
