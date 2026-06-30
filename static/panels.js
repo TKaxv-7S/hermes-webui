@@ -6911,6 +6911,47 @@ function switchSettingsSection(name,opts){
   if(opts&&opts.fromSidebarItem)_closeMobileSidebarAfterPanelSelection();
 }
 
+function _normalizeSettingsSearchText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function _extractSettingsDescriptionText(field, labelEl) {
+  const chunks = [];
+  const settingsSearch = (field.dataset && field.dataset.settingsSearch) || '';
+  if (settingsSearch) chunks.push(settingsSearch);
+  field.querySelectorAll('[data-i18n]').forEach(node => {
+    if (labelEl && (node === labelEl || labelEl.contains(node))) return;
+    const key = node.dataset ? node.dataset.i18n : null;
+    if (key) chunks.push(t(key));
+  });
+  return chunks.join(' ');
+}
+
+function _extractSettingsValueText(field) {
+  const chunks = [];
+  const controls = [...field.querySelectorAll('select, input, textarea')];
+  controls.forEach(control => {
+    const tagName = (control.tagName || '').toLowerCase();
+    if (tagName === 'select') {
+      control.querySelectorAll('option').forEach(option => {
+        if (option.dataset && option.dataset.i18n) {
+          chunks.push(t(option.dataset.i18n));
+        } else {
+          chunks.push(option.textContent);
+        }
+      });
+      return;
+    }
+    const type = (control.getAttribute && control.getAttribute('type')) || control.type || '';
+    if (tagName === 'input' && ['checkbox', 'radio', 'file', 'submit', 'reset', 'button'].includes(type)) return;
+    if (control.value) chunks.push(control.value);
+  });
+  return chunks.join(' ');
+}
+
 async function _buildSettingsIndex() {
   if (_settingsIndex) return;
   // Memoize the in-flight build so concurrent searches share one pass; the
@@ -6920,6 +6961,9 @@ async function _buildSettingsIndex() {
     // Ensure lazy-loaded panes are populated before reading the DOM
     await Promise.all([loadProvidersPanel(), loadPluginsPanel(), loadExtensionsPanel()]);
     const index = [];
+    const add = (entry) => {
+      index.push({ ...entry, _settingsSearchIndex: index.length });
+    };
     const sectionMap = {
       settingsPaneConversation: 'conversation',
       settingsPaneAppearance: 'appearance',
@@ -6943,31 +6987,96 @@ async function _buildSettingsIndex() {
         const labelEl = field.querySelector('label[data-i18n], label [data-i18n], label');
         if (!labelEl) return;
         const i18nKey = labelEl.dataset ? labelEl.dataset.i18n : undefined;
-        const label = (i18nKey && t(i18nKey)) || labelEl.textContent.trim();
-        if (label) {
-          const searchBlob = [label, field.textContent, field.dataset ? field.dataset.settingsSearch : '']
-            .filter(Boolean)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          index.push({ label, searchBlob, sectionKey, i18nKey, el: field });
-        }
+        const titleText = (i18nKey && t(i18nKey)) || labelEl.textContent.trim();
+        if (!titleText) return;
+        const valueText = _normalizeSettingsSearchText(_extractSettingsValueText(field));
+        const descriptionText = _normalizeSettingsSearchText(_extractSettingsDescriptionText(field, labelEl));
+        const searchBlob = [titleText, valueText, descriptionText, field.textContent]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        add({
+          label: titleText,
+          titleText,
+          valueText,
+          descriptionText,
+          searchBlob,
+          sectionKey,
+          i18nKey,
+          el: field,
+        });
       });
       if (sectionKey === 'providers') {
         pane.querySelectorAll('.provider-card').forEach(card => {
           const cardName = ((card.querySelector('.provider-card-name') || {}).textContent || '').trim();
-          if (cardName) index.push({ label: cardName, sectionKey, el: card, cardName });
+          if (cardName) {
+            const titleText = cardName;
+            const valueText = _normalizeSettingsSearchText(_extractSettingsValueText(card));
+            const descriptionText = _normalizeSettingsSearchText(_extractSettingsDescriptionText(card));
+            const searchBlob = [cardName, valueText, descriptionText, card.textContent]
+              .filter(Boolean)
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            add({
+              label: cardName,
+              titleText,
+              valueText,
+              descriptionText,
+              searchBlob,
+              sectionKey,
+              el: card,
+              cardName,
+            });
+          }
           card.querySelectorAll('.provider-card-field').forEach(field => {
             const fieldLabel = ((field.querySelector('.provider-card-label') || {}).textContent || '').trim();
             const label = [cardName, fieldLabel].filter(Boolean).join(' ');
-            if (label) index.push({ label, sectionKey, el: field, cardName, fieldLabel });
+            if (!label) return;
+            const valueText = _normalizeSettingsSearchText(_extractSettingsValueText(field));
+            const descriptionText = _normalizeSettingsSearchText(_extractSettingsDescriptionText(field));
+            const searchBlob = [label, valueText, descriptionText, field.textContent]
+              .filter(Boolean)
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            add({
+              label,
+              titleText: label,
+              valueText,
+              descriptionText,
+              searchBlob,
+              sectionKey,
+              el: field,
+              cardName,
+              fieldLabel,
+            });
           });
         });
       }
       if (sectionKey === 'plugins') {
         pane.querySelectorAll('.plugin-card').forEach(card => {
           const cardName = ((card.querySelector('.provider-card-name') || {}).textContent || '').trim();
-          if (cardName) index.push({ label: cardName, sectionKey, el: card, cardName });
+          if (!cardName) return;
+          const titleText = cardName;
+          const valueText = _normalizeSettingsSearchText(_extractSettingsValueText(card));
+          const descriptionText = _normalizeSettingsSearchText(_extractSettingsDescriptionText(card));
+          const searchBlob = [cardName, valueText, descriptionText, card.textContent]
+            .filter(Boolean)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          add({
+            label: cardName,
+            titleText,
+            valueText,
+            descriptionText,
+            searchBlob,
+            sectionKey,
+            el: card,
+            cardName,
+          });
         });
       }
     }
@@ -6998,16 +7107,26 @@ async function filterSettings(query) {
     system: t('settings_tab_system') || 'System',
     help: t('settings_tab_help') || 'Help',
   };
-  const matches = (_settingsIndex || []).filter(entry =>
-    (entry.searchBlob || entry.label).toLowerCase().includes(q)
-  );
+  const matches = (_settingsIndex || []).map((entry) => {
+    const score = _scoreSettingsSearchMatch(entry, q);
+    return score ? { entry, score, index: entry._settingsSearchIndex } : null;
+  }).filter(Boolean);
   if (!matches.length) {
     resultsEl.innerHTML = `<div class="settings-search-empty">${esc(t('settings_search_no_results') || 'No settings found.')}</div>`;
     resultsEl.style.display = '';
     return;
   }
   resultsEl.innerHTML = '';
-  for (const m of matches.slice(0, 12)) {
+  matches.sort((left, right) => {
+    if (left.score.bucketIndex !== right.score.bucketIndex) {
+      return left.score.bucketIndex - right.score.bucketIndex;
+    }
+    if (left.score.matchIndex !== right.score.matchIndex) {
+      return left.score.matchIndex - right.score.matchIndex;
+    }
+    return left.index - right.index;
+  });
+  for (const { entry: m } of matches.slice(0, 12)) {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'settings-search-result';
@@ -7024,6 +7143,29 @@ async function filterSettings(query) {
     resultsEl.appendChild(item);
   }
   resultsEl.style.display = '';
+}
+
+function _scoreSettingsSearchMatch(entry, q) {
+  const query = (q || '').toLowerCase().trim();
+  if (!query) return null;
+  const buckets = [
+    ['titleText', 0],
+    ['valueText', 1],
+    ['descriptionText', 2],
+    ['searchBlob', 3],
+  ];
+  for (const [bucketName, bucketIndex] of buckets) {
+    const hay = _normalizeSettingsSearchText(entry[bucketName]);
+    if (!hay) continue;
+    const matchIndex = hay.indexOf(query);
+    if (matchIndex < 0) continue;
+    return {
+      bucketIndex,
+      matchType: matchIndex === 0 ? 'prefix' : 'contains',
+      matchIndex,
+    };
+  }
+  return null;
 }
 
 function _navigateToSettingsField(entry) {
