@@ -9,6 +9,8 @@ _No unreleased changes. Entries are moved into their version block when a releas
 
 ### Fixed
 
+- **After a container restart, a stale user message is no longer permanently prepended to every later turn.** WebUI's state.db reconciliation dedup key now strips the workspace prefix for user messages (matching the streaming-side identity), so a state.db row (`[Workspace::v1: /workspace]\n<text>`) and its bare-text sidecar row are recognized as the SAME message instead of appended as a duplicate that the agent then merges into a permanent composite. Fixes the post-restart contaminated/out-of-order messages. (#5339)
+
 - **Silent server crashes now leave a diagnostic instead of vanishing.** Enabled `faulthandler` and installed thread/main-thread exception hooks plus an exit audit, so an uncaught handler-thread exception or a native fault is logged with a traceback rather than the process disappearing with no trace (previously a ~9-16h silent exit). Diagnostic hardening; stdlib-only, startup-only, no request-path change. (#4633)
 
 - **Internal verification-stop nudge no longer leaks into the transcript.** The Hermes Agent's internal verify-before-finish loop appends synthetic scaffolding turns (a "premature done" answer + a `[System: ...verification evidence...]` nudge) flagged with structured markers. WebUI now honors those markers (`_verification_stop_synthetic` / `_pre_verify_synthetic`) and drops the scaffolding turns from the visible transcript instead of rendering them as real user/assistant messages. (#5334)
