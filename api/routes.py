@@ -4712,6 +4712,16 @@ def _get_or_materialize_session(sid: str, *, refresh_cli_messages: bool = False)
         # below (and the heuristic record-check would mis-trip on mock sessions).
         if getattr(s, "read_only", False):
             raise PermissionError("read-only imported session")
+        # A previously-persisted subagent sidecar (#5307) is view-only and
+        # owned by the delegate runner — even if it was stored with
+        # read_only=False (e.g. materialized before this fix), it must not be
+        # mutated / used as a writable chat session. This mirrors the
+        # missing-sidecar subagent guard below on the happy path.
+        if (
+            (getattr(s, "source_tag", "") or getattr(s, "raw_source", "") or "").strip().lower() == "subagent"
+            or _is_subagent_child_session_id(sid)
+        ):
+            raise PermissionError("read-only subagent child session")
         if refresh_cli_messages and getattr(s, "is_cli_session", False):
             latest_messages = get_cli_session_messages(
                 sid,
@@ -22289,6 +22299,11 @@ def _handle_session_import_cli(handler, body):
                 "source_label": existing.source_label or cli_meta.get("source_label"),
                 "parent_session_id": existing.parent_session_id or cli_meta.get("parent_session_id"),
             }
+            # A subagent child is view-only: also coerce read_only=True on the
+            # persisted sidecar so a stale writable (pre-fix) sidecar can't be
+            # used to start a WebUI turn (#5307).
+            if _existing_is_sa:
+                updates["read_only"] = True
             for attr, value in updates.items():
                 if getattr(existing, attr, None) != value:
                     setattr(existing, attr, value)

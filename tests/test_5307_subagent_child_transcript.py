@@ -311,3 +311,29 @@ def test_materialize_helper_still_allows_tui(routes_module, isolated_state_db):
         # Other errors (e.g. workspace/save plumbing under the minimal fixture)
         # are out of scope; the contract here is: NOT a PermissionError.
         pass
+
+
+def test_materialize_helper_refuses_persisted_writable_subagent_sidecar(
+    routes_module, isolated_state_db, monkeypatch
+):
+    """A subagent sidecar previously persisted with read_only=False (e.g.
+    materialized before this fix) must still be refused by
+    _get_or_materialize_session on the happy path — chat-start cannot use it as
+    a writable session (#5307 Codex round 6)."""
+    import api.models as _models
+
+    class _FakeSession:
+        session_id = "persisted-sa"
+        read_only = False
+        source_tag = "subagent"
+        raw_source = "subagent"
+        is_cli_session = False
+        messages = [{"role": "user", "content": "hi"}]
+
+    monkeypatch.setattr(routes_module, "get_session", lambda _sid: _FakeSession())
+    monkeypatch.setattr(
+        routes_module, "_ensure_full_session_before_mutation",
+        lambda _sid, s: s, raising=False,
+    )
+    with pytest.raises(PermissionError):
+        routes_module._get_or_materialize_session("persisted-sa")
