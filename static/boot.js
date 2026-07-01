@@ -940,6 +940,35 @@ function _micToastKeyForRecognitionError(error){
 window._micActive=window._micActive||false;
 window._micPendingSend=window._micPendingSend||false;
 
+// ── Busy input mode eager default (#5167) ───────────────────────────────────
+// The Busy input mode preference (queue/interrupt/steer) is read on the send
+// path via `window._busyInputMode||'queue'`. The authoritative value only
+// arrives once the async boot IIFE below resolves the `/api/settings` fetch.
+// Without an eager value, every send during that boot window silently falls
+// back to 'queue', ignoring a saved 'steer'/'interrupt' preference (worse on
+// slow/contended environments like WSL2, see #5132). Mirror the resolved value
+// into localStorage — the same synchronous-source pattern used by hermes-lang /
+// hermes-theme — so the very first send after a reload honors the saved choice.
+const _BUSY_INPUT_MODES=['queue','interrupt','steer'];
+function _normalizeBusyInputMode(mode){
+  return _BUSY_INPUT_MODES.includes(mode)?mode:'queue';
+}
+function _persistBusyInputMode(mode){
+  const m=_normalizeBusyInputMode(mode);
+  try{localStorage.setItem('hermes-busy-input-mode',m);}catch(_){}
+  return m;
+}
+function _readPersistedBusyInputMode(){
+  let stored=null;
+  try{stored=localStorage.getItem('hermes-busy-input-mode');}catch(_){}
+  return _normalizeBusyInputMode(stored);
+}
+window._persistBusyInputMode=_persistBusyInputMode;
+window._readPersistedBusyInputMode=_readPersistedBusyInputMode;
+// Eager default set BEFORE the async settings fetch resolves so first sends in
+// the boot window honor the persisted preference instead of defaulting to queue.
+window._busyInputMode=_readPersistedBusyInputMode();
+
 // ── Extension TTS-engine registry (registerHermesTtsEngine) ──────────────────
 // Defined at MODULE scope (not inside the voice-mode IIFE below) so the public
 // API exists even on browsers without SpeechRecognition / speechSynthesis — an
@@ -2579,7 +2608,7 @@ window._applyTitlebarProfileVisibility=_applyTitlebarProfileVisibility;
       stringChars:parseInt(s.inflight_state_max_string_chars||60000,10)||60000,
       jsonChars:parseInt(s.inflight_state_max_json_chars||1500000,10)||1500000,
     };
-    window._busyInputMode=(s.busy_input_mode||'queue');
+    window._busyInputMode=_persistBusyInputMode(s.busy_input_mode);
     window._showBusyPlaceholderHint=!!s.show_busy_placeholder_hint;
     window._sessionEndlessScrollEnabled=!!s.session_endless_scroll;
     window._autoScrollFollow=s.auto_scroll_follow!==false;
@@ -2705,7 +2734,12 @@ window._applyTitlebarProfileVisibility=_applyTitlebarProfileVisibility;
     window._structuredCodeAutoTreeLines=10;
     window._sidebarDensity='compact';
     window._pinnedSessionsLimit=3;
-    window._busyInputMode='queue';
+    // Settings load failed: keep the persisted busy-input-mode preference (the
+    // eager default already read it from the localStorage mirror) instead of
+    // clobbering it with 'queue', so a saved 'steer'/'interrupt' still applies
+    // when the server is unreachable (#5167). The placeholder-hint has no
+    // persisted mirror, so it defaults off on failure.
+    window._busyInputMode=_readPersistedBusyInputMode();
     window._showBusyPlaceholderHint=false;
     window._sessionEndlessScrollEnabled=false;
     window._autoScrollFollow=true;

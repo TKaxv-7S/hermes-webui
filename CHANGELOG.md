@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- **The Busy input mode preference (queue / interrupt / steer) is honored on the first send after load.** Previously a send that happened before the async boot settings resolved fell back to `queue`, ignoring a saved `steer`/`interrupt` preference until it was re-saved. The preference is now mirrored to localStorage and applied eagerly on boot, on settings-load failure, and whenever it's changed via Settings. Thanks @b3nw for the report. (#5170, fixes #5167)
+
 - **Historical `reasoning_content` is no longer replayed to local/generic model backends that can't use it.** Provider-facing conversation history now gates `reasoning_content` replay: preserved by default (no change for cloud providers), stripped only on explicit `webui.reasoning_content_replay='strip'` or a confidently-local `auto` backend (LM Studio / Ollama / llama.cpp / generic OpenAI-compatible). Persisted transcripts are untouched. Thanks @Stacey2911. (#5024)
 
 - **Native OIDC login for WebUI sessions.** WebUI can now authenticate via an OpenID Connect provider (authorization-code + PKCE), with hardened token validation: HTTPS-only discovery/JWKS with private/loopback/link-local/reserved targets rejected, alg/curve pinning (RS/ES/HS/none confusion rejected), issuer + audience + nonce + state checks, JWKS kid rotation, and strict expiry validation. Thanks @rodboev. (#5012, #3825)
