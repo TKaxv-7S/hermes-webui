@@ -17,6 +17,15 @@ This is intentionally not a plugin marketplace or dependency system. It is a
 safe escape hatch for local dashboards, internal tooling, and workflow-specific
 panels that should not live in core Hermes WebUI.
 
+> **The vetted extension library.** The curated, one-click-installable extensions
+> that appear in the gallery live in a separate public repo:
+> **[hermes-webui/hermes-webui-extensions](https://github.com/hermes-webui/hermes-webui-extensions)**.
+> "In the registry == vetted." That repo holds the entries, the authoring
+> conventions ([`docs/extension-entry.md`](https://github.com/hermes-webui/hermes-webui-extensions/blob/main/docs/extension-entry.md)),
+> the JSON schema, and the CI safety gates. This document covers the WebUI-side
+> *infrastructure* (loader, manifest contract, capabilities, install client);
+> see the library repo to browse existing extensions or contribute a new one.
+
 ## What extensions can do
 
 Extensions can:
@@ -532,6 +541,16 @@ If host CSS overrides `[hidden]`, add an extension-scoped rule such as:
   display: none !important;
 }
 ```
+
+### Contributing to the extension library
+
+To publish an extension in the vetted gallery, open a PR against
+**[hermes-webui/hermes-webui-extensions](https://github.com/hermes-webui/hermes-webui-extensions)**
+following [`docs/extension-entry.md`](https://github.com/hermes-webui/hermes-webui-extensions/blob/main/docs/extension-entry.md)
+(entry layout, `extension.json`/`manifest.json` shape, and the capability +
+best-practice conventions). Every entry PR runs the repo's CI validators and
+safety scan before it can merge, and merged entries are published to the registry
+that powers Settings → Extensions.
 
 ## Minimal example
 
