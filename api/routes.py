@@ -2342,7 +2342,16 @@ def _build_session_list_cache_payload(
                 str(_r.get("source_tag") or _r.get("raw_source")
                     or _r.get("session_source") or _r.get("source") or "").strip().lower()
             )
-            if _src == "subagent":
+            _is_sa = _src == "subagent"
+            # A stale index row can say webui/fork while state.db records the
+            # row as source='subagent' (the child shares the parent's lineage).
+            # For rows not already read-only, confirm via the state.db source so
+            # a delegated child can't surface as a writable/CLI sidebar row.
+            if not _is_sa and not _r.get("read_only"):
+                _sid = str(_r.get("session_id") or "").strip()
+                if _sid and _is_subagent_child_session_id(_sid):
+                    _is_sa = True
+            if _is_sa:
                 _r["read_only"] = True
                 _r["is_cli_session"] = False
     _coerce_subagent_rows(scoped)
@@ -12472,6 +12481,8 @@ def handle_post(handler, parsed) -> bool:
             sid = body.get("session_id")
             if not sid:
                 return bad(handler, "session_id is required")
+            if _session_is_subagent_view_only(sid):
+                return bad(handler, "Subagent sessions are view-only and cannot be duplicated from WebUI", 400)
 
             session = Session.load(sid)
             if not session:
@@ -12784,6 +12795,8 @@ def handle_post(handler, parsed) -> bool:
         except ValueError as e:
             return bad(handler, str(e))
         sid = body["session_id"]
+        if _session_is_subagent_view_only(sid):
+            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
         toolsets = body.get("toolsets")
         try:
             toolsets = _validate_session_toolsets_shape(toolsets)
@@ -13111,6 +13124,8 @@ def handle_post(handler, parsed) -> bool:
         # (Opus pre-release follow-up.)
         if not isinstance(body["session_id"], str):
             return bad(handler, "session_id must be a string")
+        if _session_is_subagent_view_only(body["session_id"]):
+            return bad(handler, "Subagent sessions are view-only and cannot be branched from WebUI", 400)
         try:
             source = get_session(body["session_id"])
         except KeyError:
@@ -13229,6 +13244,8 @@ def handle_post(handler, parsed) -> bool:
             require(body, "session_id")
         except ValueError as e:
             return bad(handler, str(e))
+        if _session_is_subagent_view_only(body["session_id"]):
+            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
         try:
             from api.session_ops import retry_last
             result = retry_last(body["session_id"])
@@ -13243,6 +13260,8 @@ def handle_post(handler, parsed) -> bool:
             require(body, "session_id")
         except ValueError as e:
             return bad(handler, str(e))
+        if _session_is_subagent_view_only(body["session_id"]):
+            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
         try:
             from api.session_ops import undo_last
             result = undo_last(body["session_id"])
@@ -13909,6 +13928,8 @@ def handle_post(handler, parsed) -> bool:
         except ValueError as e:
             return bad(handler, str(e))
         sid = body["session_id"]
+        if _session_is_subagent_view_only(sid):
+            return bad(handler, "Subagent sessions are view-only and cannot be archived from WebUI", 400)
         try:
             s = get_session(sid)
             # #1558: save() refuses metadata-only session stubs because their
@@ -21129,6 +21150,8 @@ def _handle_session_compress(handler, body):
     sid = str(body.get("session_id") or "").strip()
     if not sid:
         return bad(handler, "session_id is required")
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot be compressed from WebUI", 400)
 
     # Cap focus_topic to 500 chars — matches the defensive input-size pattern
     # used elsewhere (session title :80, first-exchange snippets :500) and
