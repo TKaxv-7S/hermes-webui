@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed a blank assistant turn (avatar with no text) that could appear after a dropped stream.** When a turn's live SSE dropped but its in-flight bookkeeping wasn't cleaned up, the empty live-turn shell could be re-attached over the settled transcript on the next self-heal re-render — pinning an avatar-only blank turn on top of the already-saved answer (the message was intact on disk; a reload restored it). The live turn is now preserved across the transcript re-render only when it's genuinely live (an active stream is running, or it already holds real rendered content), so a dead empty shell is dropped and the real answer renders. The mid-stream flicker fix (#3877) is unaffected. Thanks @allenliang2022. (#5390)
+
 ### Added
 
 - **You can hide Claude Code sessions from the sidebar independently of other external sessions.** A new "Show Claude Code sessions" preference (Settings → Preferences, under "Show non-WebUI sessions", default on) filters out imported Claude Code rows while leaving your CLI / cron / webhook / other external sessions visible. Toggling it persists independently and doesn't disturb the other source-visibility preferences, and the default preserves the prior behavior for anyone who never sets it. Thanks @rodboev. (#5213, #4714)
