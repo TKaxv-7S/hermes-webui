@@ -129,6 +129,11 @@ Each SSE event carries a JSON payload with this structure:
 - `payload`: event-type-specific data.
 - `meta`: optional; reserved for tracing and debug metadata.
 
+Server-generated events that do not originate in the run journal, currently
+`heartbeat` and `session_snapshot`, need an explicit `event_id` / `stream_id` /
+`seq` rule before implementation. This RFC records that as an implementation
+gate rather than inventing values without source support.
+
 ## Event taxonomy (Phase 1 draft)
 
 | event_type | Source | Description |
@@ -223,6 +228,9 @@ endpoint is accepted:
 6. **Proxy and keepalive**: The 5 s heartbeat choice must survive real proxy
    deployments. This requires manual-owner-proof or standards-doc evidence in the
    implementation PR.
+7. **Server-generated event identity**: Maintainer must confirm how
+   `heartbeat` and `session_snapshot` populate `event_id`, `stream_id`, and
+   `seq`, because those events do not originate in the run journal.
 
 ## Bypass risks
 

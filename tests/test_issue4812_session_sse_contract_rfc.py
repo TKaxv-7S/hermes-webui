@@ -24,6 +24,12 @@ def _contracts() -> str:
     return CONTRACTS.read_text(encoding="utf-8")
 
 
+def _rfc_section(text: str, heading: str) -> str:
+    marker = f"\n## {heading}\n"
+    assert marker in text, f"RFC must include a '## {heading}' section"
+    return text.split(marker, 1)[1].split("\n## ", 1)[0]
+
+
 class TestRFCExists:
     def test_rfc_file_exists(self):
         assert RFC.exists(), f"RFC file not found: {RFC}"
@@ -92,8 +98,12 @@ class TestEndpointDistinction:
         assert "api/routes.py:16142" in text, (
             "RFC must cite the current _handle_session_events_stream definition"
         )
-        assert "api/routes.py:12296-12297" not in text
-        assert "api/routes.py:16118" not in text
+        assert "api/routes.py:12296-12297" not in text, (
+            "RFC must not cite the stale global sessions/events route range"
+        )
+        assert "api/routes.py:16118" not in text, (
+            "RFC must not cite the stale _handle_session_events_stream line"
+        )
 
     def test_contracts_distinguishes_both_endpoints(self):
         text = _contracts()
@@ -138,6 +148,18 @@ class TestSequenceAndReplaySemantics:
     def test_rfc_states_event_id_is_opaque(self):
         assert "opaque" in _rfc(), "RFC must state event_id is opaque to clients"
 
+    def test_rfc_gates_server_generated_event_identity(self):
+        text = _rfc()
+        assert "Server-generated event identity" in text, (
+            "RFC must gate heartbeat and snapshot event identity before implementation"
+        )
+        assert "heartbeat" in text and "session_snapshot" in text, (
+            "RFC must name heartbeat and session_snapshot in the event identity gate"
+        )
+        assert "event_id" in text and "stream_id" in text and "`seq`" in text, (
+            "RFC must gate event_id, stream_id, and seq values for server events"
+        )
+
     def test_rfc_names_run_journal_as_replay_source(self):
         text = _rfc()
         assert "run journal" in text.lower(), (
@@ -168,9 +190,9 @@ class TestHeartbeat:
 
     def test_rfc_does_not_add_new_heartbeat_knob(self):
         text = _rfc()
-        assert "new per-session configurable heartbeat" not in text or (
-            "not added" in text.replace("*", "").lower()
-        ), (
+        heartbeat_section = _rfc_section(text, "Heartbeat")
+        normalized = heartbeat_section.replace("*", "").lower()
+        assert "new per-session configurable heartbeat knob is not added" in normalized, (
             "RFC must not add a new per-session heartbeat knob in Phase 1"
         )
 
