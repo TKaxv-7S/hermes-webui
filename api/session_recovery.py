@@ -489,9 +489,6 @@ def recover_missing_sidecars_from_state_db(session_dir: Path, state_db_path: Pat
         sid = str(row.get('id') or '').strip()
         if not sid:
             continue
-        if row.get('_state_db_deleted_webui_tombstone'):
-            details.append({'session_id': sid, 'materialized': False, 'skipped': 'deleted_webui_tombstone'})
-            continue
         target = session_dir / f"{sid}.json"
         if target.exists():
             continue
