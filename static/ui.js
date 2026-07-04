@@ -11182,10 +11182,21 @@ function _refreshTransparentThinkingLiveRow(existing, node){
   return true;
 }
 
+function _bindTransparentFadeCleanup(body){
+  if(!body || body._transparentFadeCleanupBound || typeof body.addEventListener !== 'function') return;
+  body._transparentFadeCleanupBound = true;
+  body.addEventListener('animationend', e=>{
+    const span = e.target;
+    if(!span || !span.classList || !span.classList.contains('stream-fade-word')) return;
+    span.replaceWith(document.createTextNode(span.textContent || ''));
+  });
+}
+
 function _appendTransparentFadeText(body, text){
   if(!body) return;
   const value = String(text || '');
   if(!value) return;
+  _bindTransparentFadeCleanup(body);
   const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const frag = document.createDocumentFragment();
   const wordRe = /(\S+)(\s*)/g;

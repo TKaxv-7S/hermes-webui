@@ -306,6 +306,7 @@ eval(extractFunc('_transparentLiveRowAttributePairs'));
 eval(extractFunc('_transparentLiveRowInteractiveState'));
 eval(extractFunc('_rehydrateTransparentLiveRow'));
 eval(extractFunc('_refreshTransparentThinkingLiveRow'));
+eval(extractFunc('_bindTransparentFadeCleanup'));
 eval(extractFunc('_appendTransparentFadeText'));
 eval(extractFunc('_refreshTransparentFadeProseRow'));
 eval(extractFunc('_refreshTransparentLiveRow'));
