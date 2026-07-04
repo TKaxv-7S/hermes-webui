@@ -4772,8 +4772,10 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         const displayText = segmentStart===0
           ? parsed.displayText                          // first segment: uses think-tag stripping
           : _stripXmlToolCalls(assistantText.slice(segmentStart));
+        let anchorProcessText=displayText;
         if(_shouldUseStreamFade()){
           const caughtUp=_renderStreamingFadeMarkdown(displayText);
+          anchorProcessText=_streamFadeDomText||'';
           if(!caughtUp&&!_streamFinalized){
             setTimeout(()=>_scheduleRender(), 33);
           }
@@ -4798,7 +4800,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
             assistantBody.innerHTML = renderMd ? renderMd(fallbackText) : esc(fallbackText);
           }
         }
-        _upsertAnchorProcessProse(displayText);
+        if(anchorProcessText) _upsertAnchorProcessProse(anchorProcessText);
         if(typeof _syncLiveWorklogReasonsForAnchor==='function') _syncLiveWorklogReasonsForAnchor(assistantRow, displayText);
       }
       scrollIfPinned();

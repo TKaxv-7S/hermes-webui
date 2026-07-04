@@ -269,6 +269,26 @@ def test_transparent_anchor_prose_uses_fade_renderer_when_enabled():
     )
 
 
+def test_transparent_anchor_prose_receives_revealed_fade_text():
+    render_section = slice_between(
+        MESSAGES_JS,
+        "const displayText = segmentStart===0",
+        "if(typeof _syncLiveWorklogReasonsForAnchor==='function')",
+    )
+    assert_contains_all(
+        render_section,
+        [
+            "let anchorProcessText=displayText",
+            "const caughtUp=_renderStreamingFadeMarkdown(displayText)",
+            "anchorProcessText=_streamFadeDomText||''",
+            "if(anchorProcessText) _upsertAnchorProcessProse(anchorProcessText)",
+        ],
+    )
+    assert render_section.index("anchorProcessText=_streamFadeDomText||''") < render_section.index(
+        "_upsertAnchorProcessProse(anchorProcessText)"
+    )
+
+
 def test_stream_fade_done_drain_has_hard_cap_for_large_buffered_responses():
     drain_block = function_block(MESSAGES_JS, "_drainStreamFadeBeforeDone")
     assert "const _STREAM_FADE_DONE_DRAIN_MAX_MS=1400" in MESSAGES_JS
