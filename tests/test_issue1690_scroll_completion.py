@@ -72,7 +72,7 @@ def test_render_messages_preserve_scroll_option_uses_user_pin_state_not_stream_l
     # browser's scrollTop clamp from the inner.innerHTML='' wipe, so it stranded the
     # reader at the top. Pinned/tail-following readers still take scrollIfPinned().
     assert "if(S.activeStreamId){" in scroll_helper
-    assert "if(_messageUserUnpinned && scrollSnapshot){\n      _restoreMessageScrollSnapshot(scrollSnapshot);\n      return;\n    }\n    scrollIfPinned();\n    return;\n  }" in scroll_helper
+    assert "if(_messageUserUnpinned && scrollSnapshot){\n      _restoreMessageScrollSnapshot(scrollSnapshot);\n      _maybeShowNewMessageScrollCue(scrollSnapshot);\n      return;\n    }\n    scrollIfPinned();\n    return;\n  }" in scroll_helper
 
 
 def test_cached_render_path_uses_same_scroll_policy_as_fresh_render():

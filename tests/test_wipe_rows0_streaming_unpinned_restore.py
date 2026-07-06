@@ -103,7 +103,7 @@ const performance = { now: performanceNow };
 function scrollIfPinned(){ calls.push('scrollIfPinned'); }
 function scrollToBottom(){ calls.push('scrollToBottom'); }
 function _followMessagesAfterDomReplace(){ calls.push('follow'); return true; }
-function _maybeShowNewMessageScrollCue(){ }
+function _maybeShowNewMessageScrollCue(){ calls.push('newMessageCue'); }
 // _restoreMessageScrollSnapshot is what the FIX must call for an unpinned reader.
 // Model its real effect: it moves scrollTop back toward the captured snapshot.top.
 function _restoreMessageScrollSnapshot(snap){
@@ -148,6 +148,11 @@ console.log(JSON.stringify({ calls, finalTop: el.scrollTop }));
     assert m["finalTop"] == 3000, (
         "after restore, scrollTop must return to the reader's pre-wipe position "
         f"(3000), not stay at the browser-clamped 0; got {m['finalTop']}"
+    )
+    assert "newMessageCue" in m["calls"], (
+        "after restoring an unpinned reader mid-stream, the new-message cue must be "
+        "shown (consistent with the preserveScroll and idle-unpin restore branches); "
+        f"recorded calls={m['calls']!r}"
     )
 
 

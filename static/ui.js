@@ -13440,6 +13440,7 @@ function _scrollAfterMessageRender(preserveScroll, scrollSnapshot){
     // the no-op. Pinned/tail-following readers keep scrollIfPinned() (correct live-follow).
     if(_messageUserUnpinned && scrollSnapshot){
       _restoreMessageScrollSnapshot(scrollSnapshot);
+      _maybeShowNewMessageScrollCue(scrollSnapshot);
       return;
     }
     scrollIfPinned();
