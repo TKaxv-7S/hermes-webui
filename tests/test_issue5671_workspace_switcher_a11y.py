@@ -47,6 +47,21 @@ def test_composer_workspace_dropdown_keeps_aria_expanded_in_sync():
     assert "mobileAction.setAttribute('aria-expanded','false')" in close
 
 
+def test_closed_composer_workspace_dropdown_is_removed_from_screen_reader_navigation():
+    assert 'id="composerWsDropdown" hidden aria-hidden="true" inert' in INDEX_HTML
+
+    helper = _block(PANELS_JS, "function _setWorkspaceDropdownOpenState", "function _getComposerWorkspaceFocusTarget")
+    assert "dd.hidden=!open" in helper
+    assert "dd.setAttribute('aria-hidden',open?'false':'true')" in helper
+    assert "dd.removeAttribute('inert')" in helper
+    assert "dd.setAttribute('inert','')" in helper
+
+    toggle = _block(PANELS_JS, "function toggleComposerWsDropdown", "function closeWsDropdown")
+    close = _block(PANELS_JS, "function closeWsDropdown", "document.addEventListener('click'")
+    assert "_setWorkspaceDropdownOpenState(dd,true)" in toggle
+    assert "_setWorkspaceDropdownOpenState(composerDd,false)" in close
+
+
 def test_composer_workspace_cue_is_transient_not_a_persistent_editor_description():
     assert 'id="msg"' in INDEX_HTML
     assert 'aria-describedby="composerWorkspaceContext"' not in INDEX_HTML
@@ -57,6 +72,25 @@ def test_composer_workspace_cue_is_transient_not_a_persistent_editor_description
     assert "composerWorkspaceContext" not in sync
     assert "workspace_context_aria" not in sync
     assert "workspace_context_none" not in sync
+
+
+def test_workspace_selection_from_composer_dropdown_restores_focus_to_opening_trigger_once():
+    focus_helpers = _block(PANELS_JS, "function _getComposerWorkspaceFocusTarget", "function _renderWorkspaceAction")
+    switch = _block(PANELS_JS, "async function switchToWorkspace", "// ── Profile panel")
+
+    assert "const mobileAction=(typeof $==='function')?$('composerMobileWorkspaceAction'):null" in focus_helpers
+    assert "if(panel&&panel.classList.contains('open')&&mobileAction&&!mobileAction.disabled) return mobileAction" in focus_helpers
+    assert "return (typeof $==='function')?$('composerWorkspaceChip'):null" in focus_helpers
+    assert "function _shouldRestoreComposerWorkspaceFocus(dd)" in focus_helpers
+    assert "return !!(dd&&dd.contains(active))" in focus_helpers
+
+    assert "const restoreComposerFocusTarget=(composerDd&&composerDd.classList.contains('open')&&typeof _getComposerWorkspaceFocusTarget==='function')" in switch
+    assert "_shouldRestoreComposerWorkspaceFocus(composerDd)" in switch
+    assert "_focusComposerWorkspaceTarget(restoreComposerFocusTarget)" in switch
+    assert switch.count("_focusComposerWorkspaceTarget(restoreComposerFocusTarget)") == 1
+    assert switch.index("syncTopbar();") < switch.index("_focusComposerWorkspaceTarget(restoreComposerFocusTarget)") < switch.index("await loadDir('.')")
+    assert "workspace_switched_to" in switch
+    assert switch.index("_focusComposerWorkspaceTarget(restoreComposerFocusTarget)") < switch.index("workspace_switched_to")
 
 
 def test_new_chat_has_screen_reader_only_workspace_announcer():
