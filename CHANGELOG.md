@@ -5,6 +5,8 @@
 
 ### Fixed
 
+- **The OpenCode Go model picker now lists the current flat-rate catalog.** The static `opencode-go` model snapshot was stale; it's been re-synced from the public opencode.ai/go docs + models endpoint (adds MiniMax M3, Kimi K2.7 Code, GLM-5.2, Qwen 3.7 Max/Plus, and more), keeping preview/free-only Zen models out of the Go picker. Thanks @ai-ag2026. (#5761)
+
 - **The background-task completion drain thread can no longer spin at 100% CPU when the process registry is (re)initializing.** If the registry didn't yet expose its `completion_queue`, the drain loop's broad `except Exception: continue` swallowed the `AttributeError` and immediately retried with no delay — a hot loop. The loop now reads the queue defensively (`getattr(..., None)`) and backs off on the stop event when it's missing, catches `queue.Empty` separately as the normal idle path, and logs (no longer silently swallows) any unexpected queue error before backing off. No delivery latency is added — real completions are still drained on the 1 Hz blocking `get`. Thanks @ai-ag2026. (#5782, #2476, #4633)
 
 - **Passkey login no longer risks a hung or mis-framed response on keep-alive connections.** The passkey-login success `200` was written without a `Content-Length` header, so a client on a persistent connection could wait for a body boundary that never came or mis-frame the next response. The response now sends an explicit `Content-Length` matching the body's byte length. Thanks @ai-ag2026. (#5785)
