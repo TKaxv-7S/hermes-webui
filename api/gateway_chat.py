@@ -850,6 +850,7 @@ def _run_gateway_chat_streaming(
                 assistant_msg["reasoning"] = saved_reasoning
             previous_messages = list(getattr(s, "messages", None) or [])
             previous_context = list(getattr(s, "context_messages", None) or getattr(s, "messages", None) or [])
+            previous_process_wakeup_pause = dict(getattr(s, "process_wakeup_pause", {}) or {})
             # Stamp stable ids on the two new rows (shared with the display merge
             # below) so display and model-context copies share an id for the
             # fork/truncate aligner (#context-message-stable-id).
@@ -908,16 +909,27 @@ def _run_gateway_chat_streaming(
             s.workspace = str(workspace)
             s.model = model
             s.model_provider = model_provider
+
+            def _restore_cancelled_success_writeback():
+                s.context_messages = previous_context
+                s.messages = previous_messages
+                s.process_wakeup_pause = dict(previous_process_wakeup_pause)
+                s.save()
+                put_gateway_event("cancel", {"message": "Cancelled by user"})
+
             # Recheck immediately before clearing the pause; Stop can arrive
             # while the success transcript is being assembled.
             if cancel_event.is_set():
-                s.context_messages = previous_context
-                s.messages = previous_messages
-                s.save()
-                put_gateway_event("cancel", {"message": "Cancelled by user"})
+                _restore_cancelled_success_writeback()
                 return
             clear_process_wakeup_pause(s, reason="run_completed")
+            if cancel_event.is_set():
+                _restore_cancelled_success_writeback()
+                return
             s.save()
+            if cancel_event.is_set():
+                _restore_cancelled_success_writeback()
+                return
         try:
             from api.goals import evaluate_goal_after_turn, has_active_goal
             from api.profiles import get_hermes_home_for_profile
