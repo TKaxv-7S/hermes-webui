@@ -13,7 +13,7 @@ the same directory, ``fsync``s, then ``os.replace``s it into place.  Because
 leaves the ORIGINAL file byte-for-byte intact, and a success swaps in the new
 contents in a single step.
 
-These tests pin the helper and all three config.yaml callers across success,
+These tests pin the helper and all four config.yaml callers across success,
 fault, metadata, symlink, permission, and concurrency paths so a future
 refactor cannot silently reintroduce the truncating plain-write.
 """
@@ -238,6 +238,83 @@ def test_concurrent_writers_expose_only_complete_versions(tmp_path: Path) -> Non
     assert [p.name for p in tmp_path.iterdir()] == ["config.yaml"]
 
 
+def test_forced_fallback_serializes_writers_and_syncs_only_complete_versions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The non-atomic compatibility path must not interleave WebUI writers."""
+    target = tmp_path / "config.yaml"
+    payloads = [
+        f"writer: {index}\npadding: {'x' * 20_000}\n".encode()
+        for index in range(6)
+    ]
+    valid_versions = set(payloads)
+    observed_at_sync: list[bytes] = []
+    active_writers = 0
+    max_active_writers = 0
+    state_lock = threading.Lock()
+    real_fdopen = os.fdopen
+    real_fsync = os.fsync
+
+    from api import paths
+
+    def _force_fallback(*_args, **_kwargs):
+        raise PermissionError("simulated non-writable parent")
+
+    class _SlowWriter:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def __enter__(self):
+            nonlocal active_writers, max_active_writers
+            self._wrapped.__enter__()
+            with state_lock:
+                active_writers += 1
+                max_active_writers = max(max_active_writers, active_writers)
+            return self
+
+        def __exit__(self, *args):
+            nonlocal active_writers
+            try:
+                return self._wrapped.__exit__(*args)
+            finally:
+                with state_lock:
+                    active_writers -= 1
+
+        def write(self, value: str) -> None:
+            midpoint = len(value) // 2
+            self._wrapped.write(value[:midpoint])
+            self._wrapped.flush()
+            time.sleep(0.01)
+            self._wrapped.write(value[midpoint:])
+
+        def flush(self) -> None:
+            self._wrapped.flush()
+
+        def fileno(self) -> int:
+            return self._wrapped.fileno()
+
+    def _slow_fdopen(fd: int, *args, **kwargs):
+        return _SlowWriter(real_fdopen(fd, *args, **kwargs))
+
+    def _observing_fsync(fd: int) -> None:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            observed_at_sync.append(target.read_bytes())
+        real_fsync(fd)
+
+    target.write_bytes(payloads[0])
+    monkeypatch.setattr(paths.tempfile, "mkstemp", _force_fallback)
+    monkeypatch.setattr(os, "fdopen", _slow_fdopen)
+    monkeypatch.setattr(os, "fsync", _observing_fsync)
+
+    with ThreadPoolExecutor(max_workers=len(payloads)) as pool:
+        list(pool.map(lambda payload: _atomic_write_text(target, payload.decode()), payloads))
+
+    assert max_active_writers == 1
+    assert len(observed_at_sync) == len(payloads)
+    assert all(observed in valid_versions for observed in observed_at_sync)
+    assert target.read_bytes() in valid_versions
+
+
 def test_new_file_uses_cached_umask_mode(tmp_path: Path, monkeypatch) -> None:
     """A freshly created file uses _NEW_FILE_MODE (umask-adjusted 0666), not 0600.
 
@@ -293,6 +370,23 @@ def test_atomic_write_follows_config_symlink(tmp_path: Path) -> None:
     assert link.read_text(encoding="utf-8") == "model:\n  default: new\n"
     assert (os.stat(target).st_mode & 0o777) == 0o644
     assert [p.name for p in link_dir.iterdir()] == ["config.yaml"]
+
+
+def test_atomic_write_preserves_hard_link_aliases(tmp_path: Path) -> None:
+    """Path.write_text updates a shared inode instead of severing hard links."""
+    target = tmp_path / "config.yaml"
+    alias = tmp_path / "shared-config.yaml"
+    target.write_text("model:\n  default: old\n", encoding="utf-8")
+    os.link(target, alias)
+    inode = os.stat(target).st_ino
+
+    _atomic_write_text(target, "model:\n  default: new\n")
+
+    assert target.read_text(encoding="utf-8") == "model:\n  default: new\n"
+    assert alias.read_text(encoding="utf-8") == "model:\n  default: new\n"
+    assert os.stat(target).st_ino == inode
+    assert os.stat(alias).st_ino == inode
+    assert os.stat(target).st_nlink == 2
 
 
 def test_symlink_retarget_during_write_aborts_without_touching_either_target(

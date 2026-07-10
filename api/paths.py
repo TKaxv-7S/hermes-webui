@@ -9,6 +9,7 @@ import errno
 import os
 import stat
 import tempfile
+import threading
 from pathlib import Path
 
 HOME = Path.home()
@@ -33,6 +34,12 @@ def _probe_umask() -> int:
 # brand-new file. Computed once at import (single-threaded) to avoid probing the
 # process-wide umask on every new-file write; see ``_probe_umask``.
 _NEW_FILE_MODE = 0o666 & ~_probe_umask()
+
+# In-place compatibility writes cannot use rename isolation. Serialize every
+# such write in this process so concurrent WebUI saves cannot interleave their
+# truncate/write/fsync sequences. A single lock avoids a permanent per-path
+# lock cache for arbitrary profile/config locations.
+_IN_PLACE_WRITE_LOCK = threading.RLock()
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -76,10 +83,11 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
     (Unlike ``.env``, ``config.yaml`` holds no secrets and is not meant to be
     forced to ``0600``.)
 
-    Symlinks keep the same follow-through semantics as ``Path.write_text``:
-    writing ``config.yaml`` through a symlink updates the referent instead of
-    replacing the link itself with a regular file. A target change observed
-    before commit is rejected rather than updating a stale referent.
+    Symlinks and hard links keep the same follow-through semantics as
+    ``Path.write_text``: writing ``config.yaml`` through a symlink updates the
+    referent, while writing an inode with multiple hard links updates every
+    alias rather than severing the selected path. A symlink target change
+    observed before commit is rejected rather than updating a stale referent.
 
     The temp+rename dance needs WRITE PERMISSION ON THE DIRECTORY, which the
     plain ``Path.write_text`` it replaced did not: hardened deployments
@@ -88,9 +96,13 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
     settings at all. When temp creation is denied, or the original uid/gid
     cannot be transferred to the temp inode, we fall back to a guarded
     descriptor write only if the target is still the regular-file inode
-    inspected above. This gives up crash-atomicity only where atomic replace
-    with preserved metadata is impossible. Other ``PermissionError``s still
-    propagate. Successful renames fsync the parent directory where supported.
+    inspected above. Hard-linked files use that same path because replacing
+    their directory entry would break ``Path.write_text`` compatibility. These
+    in-place writes are serialized across process-local WebUI writers. They give
+    up crash-atomicity (and raw concurrent readers may observe the write in
+    progress) only where atomic replace with preserved semantics is impossible.
+    Other ``PermissionError``s still propagate. Successful renames fsync the
+    parent directory where supported.
 
     The caller is responsible for ensuring ``path.parent`` exists.
     """
@@ -108,29 +120,34 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
             raise RuntimeError("config symlink target changed during atomic write")
 
     def _write_in_place() -> None:
-        if existing_stat is None or not stat.S_ISREG(existing_stat.st_mode):
-            raise PermissionError(f"Cannot replace config path: {write_path}")
-        _verify_symlink_target()
-        fallback_fd = os.open(write_path, os.O_WRONLY)
-        owns_fallback_fd = True
-        try:
-            opened_stat = os.fstat(fallback_fd)
-            if (opened_stat.st_dev, opened_stat.st_ino) != (
-                existing_stat.st_dev,
-                existing_stat.st_ino,
-            ):
-                raise PermissionError("config target changed before fallback write")
+        with _IN_PLACE_WRITE_LOCK:
+            if existing_stat is None or not stat.S_ISREG(existing_stat.st_mode):
+                raise PermissionError(f"Cannot replace config path: {write_path}")
             _verify_symlink_target()
-            os.ftruncate(fallback_fd, 0)
-            fallback_file = os.fdopen(fallback_fd, "w", encoding=encoding)
-            owns_fallback_fd = False
-            with fallback_file:
-                fallback_file.write(text)
-                fallback_file.flush()
-                os.fsync(fallback_file.fileno())
-        finally:
-            if owns_fallback_fd:
-                os.close(fallback_fd)
+            fallback_fd = os.open(write_path, os.O_WRONLY)
+            owns_fallback_fd = True
+            try:
+                opened_stat = os.fstat(fallback_fd)
+                if (opened_stat.st_dev, opened_stat.st_ino) != (
+                    existing_stat.st_dev,
+                    existing_stat.st_ino,
+                ):
+                    raise PermissionError("config target changed before fallback write")
+                _verify_symlink_target()
+                os.ftruncate(fallback_fd, 0)
+                fallback_file = os.fdopen(fallback_fd, "w", encoding=encoding)
+                owns_fallback_fd = False
+                with fallback_file:
+                    fallback_file.write(text)
+                    fallback_file.flush()
+                    os.fsync(fallback_file.fileno())
+            finally:
+                if owns_fallback_fd:
+                    os.close(fallback_fd)
+
+    if existing_stat is not None and existing_stat.st_nlink > 1:
+        _write_in_place()
+        return
 
     try:
         fd, tmp = tempfile.mkstemp(
