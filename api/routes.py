@@ -16868,6 +16868,14 @@ def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
     except KeyError:
         return j(handler, {"error": "Session not found"}, status=404)
 
+    # Parse the resume cursor and baseline the journal BEFORE committing SSE headers
+    # (and thus before any run could complete mid-handler). Capturing after
+    # end_sse_headers() leaves a window where a run finishing between header commit
+    # and baseline is absorbed into the baseline and silently lost. Both operations
+    # are side-effect-free (header read + stat-only fingerprint), safe pre-response.
+    resume_event_id = _session_events_resume_event_id(handler, parsed)
+    _idle_journal_fp = session_journal_fingerprint(session_id)
+
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
     handler.send_header("Cache-Control", "no-cache")
@@ -16877,12 +16885,6 @@ def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
     end_sse_headers(handler)
     _sse_set_write_deadline(handler)
 
-    resume_event_id = _session_events_resume_event_id(handler, parsed)
-    # Baseline the journal at the EARLIEST point — before the preliminary active-run
-    # lookup AND the initial cursor replay below — so a run completing during either
-    # operation is detected by the idle wait loop rather than absorbed into a
-    # too-late baseline and silently lost (no stream left to attach afterward).
-    _idle_journal_fp = session_journal_fingerprint(session_id)
     active_stream_id = _active_run_stream_for_session(session_id)
     subscriber = None
     subscriber_stream = None
