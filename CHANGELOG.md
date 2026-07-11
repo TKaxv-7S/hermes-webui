@@ -5,6 +5,8 @@
 
 ### Fixed
 
+- **Context chips restart at "Context 1" after you clear them.** The selection counter used to only ever increment, so clearing all context chips (or switching sessions) and selecting new text started at "Context N+1" instead of "Context 1". The counter now resets whenever the last chip is removed and on clear-all / session switch, so chip numbering starts fresh each time. Thanks @akay64. (#5929)
+
 - **The agent no longer tells you a stored credential is "wrong" when it's just masked.** Secrets are redacted (`***`, `sk-abc…xyz1`) before the model sees them, but nothing told the model that masking was intentional — so it sometimes read a masked API key or password and reported it as a typo or a placeholder. The WebUI progress-guidance prompt now explains that redacted credential fields are deliberate masking, so the agent stops flagging correctly-stored secrets as errors. Thanks @mvanhorn. (#5927, #5871)
 
 - **Stale "unread" dot no longer lingers on a session after you open it.** Visiting a session now clears its sidebar unread indicator across the paths that previously left it stuck — the same-session reselect, the metadata-arrival ack, and the post-message-load re-sync — while a completion that lands in a genuinely hidden/background tab correctly stays unread. It also stops a phantom unread/streaming indicator from appearing when you switch from a busy session to an idle one (the idle session's streaming flags are now reset from its own metadata before the sidebar repaint, instead of inheriting the previous session's busy state). Thanks @neaucode-bot. (#5917, #4946)
