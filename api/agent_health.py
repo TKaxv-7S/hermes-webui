@@ -252,44 +252,65 @@ def _gateway_running_pid(gateway_status: Any, pid_path: Path | None) -> int | No
         return get_running_pid()
 
 
-def _accepts_positional_pid_path(get_running_pid: Any) -> bool:
+def _declared_pid_path_parameter(
+    get_running_pid: Any,
+) -> inspect.Parameter | None:
     try:
         signature = inspect.signature(get_running_pid)
     except (TypeError, ValueError):
-        return False
+        return None
     for param in signature.parameters.values():
         if param.kind not in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
         ):
             continue
         name = str(param.name or "").lower()
-        return "path" in name and "pid" in name
-    return False
+        if "path" in name and "pid" in name:
+            return param
+    return None
 
 
 def _gateway_running_pid_strict_path(gateway_status: Any, pid_path: Path) -> int | None:
     """Read a PID from an explicit path only; never fall back to ambient state."""
     get_running_pid = gateway_status.get_running_pid
-    for kwargs in (
-        {"pid_path": pid_path, "cleanup_stale": False},
-        {"pid_path": pid_path},
-    ):
-        try:
-            return get_running_pid(**kwargs)
-        except TypeError:
-            pass
-
-    if not _accepts_positional_pid_path(get_running_pid):
+    pid_path_param = _declared_pid_path_parameter(get_running_pid)
+    if pid_path_param is None:
         return None
 
-    try:
-        return get_running_pid(pid_path, cleanup_stale=False)
-    except TypeError:
+    if pid_path_param.kind is inspect.Parameter.KEYWORD_ONLY:
+        kwargs = {pid_path_param.name: pid_path}
         try:
-            return get_running_pid(pid_path)
+            return get_running_pid(**kwargs, cleanup_stale=False)
         except TypeError:
-            return None
+            try:
+                return get_running_pid(**kwargs)
+            except TypeError:
+                return None
+
+    if pid_path_param.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
+        kwargs = {pid_path_param.name: pid_path}
+        try:
+            return get_running_pid(**kwargs, cleanup_stale=False)
+        except TypeError:
+            try:
+                return get_running_pid(**kwargs)
+            except TypeError:
+                pass
+
+    if pid_path_param.kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        try:
+            return get_running_pid(pid_path, cleanup_stale=False)
+        except TypeError:
+            try:
+                return get_running_pid(pid_path)
+            except TypeError:
+                return None
+    return None
 
 
 def get_active_profile_gateway_running_pid(profile: str | None = None) -> int | None:
