@@ -1308,7 +1308,7 @@ def test_slice6_live_shadow_feed_wires_anchor_scene_for_visible_order_handoff():
     assert "_applyToAnchor" not in reasoning_body
     assert "const liveThinkingText=_liveThinkingText();" in reasoning_body
     assert "if(!_upsertAnchorReasoning(liveThinkingText))" in reasoning_body
-    assert "_updateLiveThinkingCard(liveThinkingText)" in reasoning_body
+    assert "_updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true})" in reasoning_body
     assert "function _flushReasoningToAnchor()" in src
     assert "_upsertAnchorReasoning(reasoningText" in src
     assert "`live-reasoning:${streamId}:final`" in src

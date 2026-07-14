@@ -18435,9 +18435,10 @@ function appendThinking(text='', options){
   // without this check they would pollute the new session's DOM.
   options=options||{};
   const allowPendingPlaceholder=!!(options&&options.pending===true);
+  const anchorRenderFallback=!!(options&&options.anchorRenderFallback===true);
   if(typeof isFinalAnswerOnlyMode==='function'&&isFinalAnswerOnlyMode()) return;
   if(!S.session||(!S.activeStreamId&&!allowPendingPlaceholder)) return;
-  if(!allowPendingPlaceholder&&isLiveAnchorActivitySceneOwner(S.activeStreamId)){
+  if(!allowPendingPlaceholder&&!anchorRenderFallback&&isLiveAnchorActivitySceneOwner(S.activeStreamId)){
     _renderLiveAnchorActivitySceneForStream(S.activeStreamId, S.session.session_id);
     return;
   }

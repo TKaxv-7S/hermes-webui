@@ -689,15 +689,16 @@ class TestToolCallGroupingStatic:
         assert "_upsertAnchorReasoning(liveThinkingText)" in reasoning_fn, (
             "Anchor reasoning must remain the primary renderer path."
         )
+        fallback_call = "_updateLiveThinkingCard(liveThinkingText,{anchorRenderFallback:true})"
         assert reasoning_fn.index("_upsertAnchorReasoning(liveThinkingText)") < reasoning_fn.index(
-            "_updateLiveThinkingCard(liveThinkingText)"
+            fallback_call
         ), (
             "The legacy thinking card should only run after anchor upsert fails."
         )
         assert "if(!_upsertAnchorReasoning(liveThinkingText)){" in reasoning_fn, (
             "The legacy thinking card should be a falsy-anchor fallback."
         )
-        assert reasoning_fn.count("_updateLiveThinkingCard(liveThinkingText)") == 1, (
+        assert reasoning_fn.count(fallback_call) == 1, (
             "Reasoning SSE updates should call the live thinking card only in fallback."
         )
         assert "_updateLiveThinkingCard(" in render_live_thinking_fn, (
