@@ -24,21 +24,58 @@ _RESTART_MESSAGE = (
 
 
 def _read_agent_revision(agent_dir: Path | None) -> str | None:
-    """Return the checkout HEAD, or ``None`` for a non-Git/unavailable source."""
+    """Return the loaded Agent checkout HEAD, or ``None`` if it is not tracked."""
     if agent_dir is None:
         return None
+
+    module = sys.modules.get("run_agent")
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return None
+
     try:
-        result = subprocess.run(
-            ["git", "-C", str(agent_dir), "rev-parse", "--verify", "HEAD"],
+        module_path = Path(module_file).resolve()
+        worktree_result = subprocess.run(
+            ["git", "-C", str(agent_dir), "rev-parse", "--show-toplevel"],
             check=False,
             capture_output=True,
             text=True,
             timeout=2,
         )
-    except (OSError, subprocess.TimeoutExpired):
+        if worktree_result.returncode != 0:
+            return None
+        worktree = Path(worktree_result.stdout.strip()).resolve()
+        relative_module = module_path.relative_to(worktree).as_posix()
+        tracked_result = subprocess.run(
+            [
+                "git",
+                "--literal-pathspecs",
+                "-C",
+                str(worktree),
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                relative_module,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if tracked_result.returncode != 0:
+            return None
+        revision_result = subprocess.run(
+            ["git", "-C", str(worktree), "rev-parse", "--verify", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
         return None
-    revision = result.stdout.strip()
-    return revision if result.returncode == 0 and revision else None
+
+    revision = revision_result.stdout.strip()
+    return revision if revision_result.returncode == 0 and revision else None
 
 
 _AGENT_SOURCE_DIR: Path | None = None

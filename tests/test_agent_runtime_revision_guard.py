@@ -114,6 +114,68 @@ def test_initial_non_git_source_preserves_supported_runtime(monkeypatch):
     agent_runtime.ensure_agent_runtime_current()
 
 
+def test_untracked_loaded_module_inside_outer_git_repo_is_non_git(
+    monkeypatch, tmp_path: Path
+):
+    """An enclosing unrelated Git repo must not identify an installed module."""
+    from api import agent_runtime
+
+    outer_repo = tmp_path / "outer-repo"
+    module_dir = outer_repo / "installed" / "hermes-agent"
+    module_dir.mkdir(parents=True)
+    module_file = module_dir / "run_agent.py"
+    module_file.write_text("class AIAgent: pass\n", encoding="utf-8")
+    (outer_repo / "tracked.txt").write_text("unrelated\n", encoding="utf-8")
+    _git(outer_repo, "init", "-q")
+    _git(outer_repo, "add", "tracked.txt")
+    _git(outer_repo, "commit", "-qm", "unrelated")
+
+    loaded_module = types.ModuleType("run_agent")
+    loaded_module.__file__ = str(module_file)
+    monkeypatch.setitem(sys.modules, "run_agent", loaded_module)
+    monkeypatch.setattr(agent_runtime, "_AGENT_SOURCE_DIR", None)
+    monkeypatch.setattr(agent_runtime, "_AGENT_REVISION", None)
+
+    agent_runtime._capture_loaded_agent_revision()
+
+    assert agent_runtime._AGENT_SOURCE_DIR == module_dir.resolve()
+    assert agent_runtime._AGENT_REVISION is None
+
+    (outer_repo / "tracked.txt").write_text("unrelated change\n", encoding="utf-8")
+    _git(outer_repo, "add", "tracked.txt")
+    _git(outer_repo, "commit", "-qm", "unrelated change")
+
+    agent_runtime.ensure_agent_runtime_current()
+
+
+def test_untracked_module_pathspec_metacharacters_are_literal(monkeypatch, tmp_path: Path):
+    """Git pathspec syntax must not turn an untracked module into a tracked match."""
+    from api import agent_runtime
+
+    outer_repo = tmp_path / "outer-repo"
+    tracked_dir = outer_repo / "installed" / "agent"
+    untracked_dir = outer_repo / "installed" / "[a]gent"
+    tracked_dir.mkdir(parents=True)
+    untracked_dir.mkdir(parents=True)
+    (tracked_dir / "run_agent.py").write_text("class Other: pass\n", encoding="utf-8")
+    module_file = untracked_dir / "run_agent.py"
+    module_file.write_text("class AIAgent: pass\n", encoding="utf-8")
+    _git(outer_repo, "init", "-q")
+    _git(outer_repo, "add", "installed/agent/run_agent.py")
+    _git(outer_repo, "commit", "-qm", "tracked lookalike")
+
+    loaded_module = types.ModuleType("run_agent")
+    loaded_module.__file__ = str(module_file)
+    monkeypatch.setitem(sys.modules, "run_agent", loaded_module)
+    monkeypatch.setattr(agent_runtime, "_AGENT_SOURCE_DIR", None)
+    monkeypatch.setattr(agent_runtime, "_AGENT_REVISION", None)
+
+    agent_runtime._capture_loaded_agent_revision()
+
+    assert agent_runtime._AGENT_SOURCE_DIR == untracked_dir.resolve()
+    assert agent_runtime._AGENT_REVISION is None
+
+
 def test_revision_identity_comes_from_loaded_agent_module(monkeypatch, tmp_path: Path):
     """The configured discovery path must not override the loaded module path."""
     from api import agent_runtime
