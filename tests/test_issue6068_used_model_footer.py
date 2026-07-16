@@ -1,15 +1,76 @@
 """Regression coverage for #6068 per-turn used-model footer instrumentation."""
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from api.models import Session
 
 
 REPO = Path(__file__).resolve().parents[1]
+NODE = shutil.which("node")
+UI_JS_PATH = REPO / "static" / "ui.js"
 STREAMING_PY = (REPO / "api" / "streaming.py").read_text(encoding="utf-8")
 MODELS_PY = (REPO / "api" / "models.py").read_text(encoding="utf-8")
 UI_JS = (REPO / "static" / "ui.js").read_text(encoding="utf-8")
 STYLE_CSS = (REPO / "static" / "style.css").read_text(encoding="utf-8")
+
+
+def _run_node(source: str) -> str:
+    result = subprocess.run(
+        [NODE],
+        input=source,
+        cwd=str(REPO),
+        capture_output=True,
+        encoding="utf-8",
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
+    return result.stdout.strip()
+
+
+def _eval_used_model_turn_chip_label_cases() -> dict:
+    ui_js = UI_JS_PATH.read_text(encoding="utf-8")
+    source = f"""
+const src = {ui_js!r};
+function extractFunc(name) {{
+  const re = new RegExp('function\\\\s+' + name + '\\\\s*\\\\(');
+  const start = src.search(re);
+  if (start < 0) throw new Error(name + ' not found');
+  let i = src.indexOf('{{', start);
+  let depth = 1; i++;
+  while (depth > 0 && i < src.length) {{
+    if (src[i] === '{{') depth++;
+    else if (src[i] === '}}') depth--;
+    i++;
+  }}
+  return src.slice(start, i);
+}}
+function getModelLabel(modelId) {{
+  return String(modelId || 'Unknown');
+}}
+eval(extractFunc('_compactComposerModelChipLabel'));
+eval(extractFunc('_usedModelTurnChipLabel'));
+const modelId = 'gpt-5-mini';
+const expectedPresent = _compactComposerModelChipLabel(modelId, getModelLabel(modelId));
+const cases = {{
+  present: _usedModelTurnChipLabel({{ _usedModel: modelId }}),
+  expectedPresent,
+  suppressed: _usedModelTurnChipLabel({{
+    _usedModel: modelId,
+    _gatewayRouting: {{ used_model: 'deepseek-v3.2' }},
+  }}),
+  absent: _usedModelTurnChipLabel({{}}),
+  nullMsg: _usedModelTurnChipLabel(null),
+}};
+console.log(JSON.stringify(cases));
+"""
+    return json.loads(_run_node(source))
 
 
 def test_streaming_stamps_used_model_on_assistant_message_and_usage_payload():
@@ -38,13 +99,20 @@ def test_models_allowlist_round_trips_used_model_across_save_reload():
     assert reloaded.messages[-1]["_firstTokenMs"] == 250
 
 
-def test_settled_footer_renders_used_model_chip_and_suppresses_gateway_duplicate():
-    assert "function _usedModelTurnChipLabel" in UI_JS
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_used_model_turn_chip_label_renders_and_suppresses_gateway_duplicate():
+    """Behavioral footer chip cases from #6068 (not source-string greps)."""
+    cases = _eval_used_model_turn_chip_label_cases()
+    assert cases["present"] == cases["expectedPresent"]
+    assert cases["present"]  # non-empty label when _usedModel is set
+    assert cases["suppressed"] == ""
+    assert cases["absent"] == ""
+    assert cases["nullMsg"] == ""
+
+
+def test_settled_footer_wires_used_model_chip_in_dom_paths():
     assert "msg-used-model-inline" in UI_JS
     assert "_usedModelTurnChipLabel(msg)" in UI_JS
-    assert "routing.used_model" in UI_JS
-    assert "msg._usedModel" in UI_JS
-    assert "_compactComposerModelChipLabel(usedModel,getModelLabel(usedModel))" in UI_JS
     assert ".msg-used-model-inline" in STYLE_CSS
 
 
