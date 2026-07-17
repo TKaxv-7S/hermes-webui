@@ -176,7 +176,8 @@ def truncate_context_for_display_keep(
         if type(value) not in (str, int, float):
             return False
         try:
-            return value == value and hash(value) is not None
+            hash(value)
+            return value == value
         except Exception:
             return False
 

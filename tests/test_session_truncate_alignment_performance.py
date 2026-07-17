@@ -318,18 +318,22 @@ def test_alignment_differential_randomized_against_origin_matcher():
 
 
 class _CountingDict(dict):
-    id_gets = 0
+    def __init__(self, counter, **kwargs):
+        super().__init__(**kwargs)
+        self._counter = counter
 
     def get(self, key, default=None):
         if key == "id":
-            type(self).id_gets += 1
+            self._counter["id_gets"] += 1
         return super().get(key, default)
 
 
 def test_alignment_prefilters_timestamp_candidates_once():
-    _CountingDict.id_gets = 0
+    counter = {"id_gets": 0}
     context = [
-        _CountingDict(role="assistant", content="same", timestamp=7, id=f"ctx-{i}")
+        _CountingDict(
+            counter, role="assistant", content="same", timestamp=7, id=f"ctx-{i}"
+        )
         for i in range(500)
     ]
     display = [
@@ -337,4 +341,4 @@ def test_alignment_prefilters_timestamp_candidates_once():
         for i in range(250)
     ]
     session_ops.truncate_context_for_display_keep(context, display, 125)
-    assert _CountingDict.id_gets <= len(context) + 2
+    assert counter["id_gets"] <= len(context) + 2
