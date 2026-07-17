@@ -428,6 +428,75 @@ def test_empty_context_recovery_omits_structured_reasoning_only_content(tmp_path
     ]
 
 
+def test_empty_context_recovery_preserves_tool_calls_with_reasoning_only_content():
+    session_id = "issue3929_empty_context_reasoning_tool_call"
+    stream_id = "stream_empty_context_reasoning_tool_call"
+    tool_call = {
+        "id": "call_issue3929",
+        "type": "function",
+        "function": {"name": "inspect_state", "arguments": "{}"},
+    }
+    session = Session(
+        session_id=session_id,
+        title="Reasoning-only tool boundary",
+        messages=[
+            {"role": "user", "content": "Inspect the state"},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "reasoning",
+                        "reasoning": "Tool planning Thinking must stay display-only.",
+                    },
+                ],
+                "tool_calls": [tool_call],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_issue3929",
+                "content": "{\"ok\": true}",
+            },
+        ],
+        context_messages=[],
+    )
+    append_run_event(
+        session_id,
+        stream_id,
+        "token",
+        {"text": "Recovered visible answer."},
+    )
+
+    assert _append_journaled_partial_output(
+        session, stream_id, dedupe_existing=True,
+    ) is True
+    session.save()
+
+    models.SESSIONS.clear()
+    reloaded = models.get_session(session_id)
+    assert [message.get("role") for message in reloaded.context_messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert reloaded.context_messages[1]["content"] == ""
+    assert reloaded.context_messages[1]["tool_calls"] == [tool_call]
+    assert reloaded.context_messages[2]["tool_call_id"] == "call_issue3929"
+    assert "Tool planning Thinking" not in json.dumps(
+        reloaded.context_messages, ensure_ascii=False,
+    )
+
+    sanitized = _sanitize_messages_for_api(reloaded.context_messages)
+    assert [message.get("role") for message in sanitized] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert sanitized[1]["tool_calls"] == [tool_call]
+    assert sanitized[2]["tool_call_id"] == "call_issue3929"
+
+
 def test_empty_context_recovery_preserves_duplicate_historical_replies():
     session_id = "issue3929_empty_context_duplicate_history"
     stream_id = "stream_empty_context_duplicate_history"

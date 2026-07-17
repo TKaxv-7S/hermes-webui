@@ -849,7 +849,10 @@ def _recovered_model_context_projection(message: dict) -> dict | None:
     if projected.get('_error'):
         return None
     if _content_has_reasoning_only_parts(projected.get('content')):
-        return None
+        if projected.get('tool_calls'):
+            projected['content'] = ''
+        else:
+            return None
     projected_text = _normalize_journal_recovery_text(projected.get('content'))
     if not projected_text and not projected.get('tool_call_id') and not projected.get('tool_calls'):
         return None
