@@ -179,8 +179,6 @@ def test_terminal_frame_survives_concurrent_drain_during_drop_oldest():
     post-Full call (as if a concurrent consumer had drained it), then behaves
     normally. The OLD `break` logic drops the terminal item; the NEW `continue`
     logic delivers it. We run both and assert only `continue` delivers."""
-    from unittest.mock import MagicMock
-
     terminal_item = ("stream_end", None, "terminal-id")
 
     class _RaceyQueue:
