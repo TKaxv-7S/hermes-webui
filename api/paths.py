@@ -7,6 +7,7 @@ larger startup side effects.
 
 import errno
 import os
+import secrets
 import stat
 import tempfile
 import threading
@@ -15,25 +16,28 @@ from pathlib import Path
 HOME = Path.home()
 
 
-def _probe_umask() -> int:
-    """Return the current process umask.
+def _create_atomic_temp_file(write_path: Path, *, existing: bool) -> tuple[int, str]:
+    """Create a same-directory temp file without reading the process umask.
 
-    ``os.umask`` has no read-only form: it always sets and returns the previous
-    value, so we set-then-restore. This is a process-wide syscall, so the
-    two-call dance is unsafe once request threads are running (another thread
-    creating a file in the tiny window would see umask 0). We therefore call this
-    exactly once, at import, while the module is still single-threaded, and cache
-    the derived default below.
+    ``tempfile.mkstemp`` deliberately creates files as ``0600``. For a brand-new
+    config, use ``os.open(..., 0666)`` instead so the kernel applies the active
+    process umask as it would for ``Path.write_text``. Reading umask by calling
+    ``os.umask`` is unsafe because that syscall mutates process-wide state, and
+    imports may happen after the threaded server has started.
     """
-    umask = os.umask(0)
-    os.umask(umask)
-    return umask
+    if existing:
+        return tempfile.mkstemp(
+            dir=str(write_path.parent), prefix=f".{write_path.name}_", suffix=".tmp"
+        )
 
-
-# umask-adjusted 0666 — the mode a plain ``open(..., "w")`` would produce for a
-# brand-new file. Computed once at import (single-threaded) to avoid probing the
-# process-wide umask on every new-file write; see ``_probe_umask``.
-_NEW_FILE_MODE = 0o666 & ~_probe_umask()
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    for _ in range(100):
+        tmp = write_path.parent / f".{write_path.name}_{secrets.token_hex(16)}.tmp"
+        try:
+            return os.open(tmp, flags, 0o666), str(tmp)
+        except FileExistsError:
+            continue
+    raise FileExistsError("unable to allocate unique config temporary file")
 
 # In-place compatibility writes cannot use rename isolation. Serialize every
 # such write in this process so concurrent WebUI saves cannot interleave their
@@ -96,8 +100,8 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
     every rewrite could silently reset a shared config's group and tighten a
     group/other-readable ``config.yaml`` (commonly ``0644``/``0664``) down to
     owner-only. Existing files copy uid/gid and mode onto the temp descriptor;
-    new files use ``_NEW_FILE_MODE`` (the umask-adjusted ``0666`` a normal
-    ``open(..., "w")`` would have produced).
+    new files use the active process umask, exactly as a normal
+    ``open(..., "w")`` would.
     (Unlike ``.env``, ``config.yaml`` holds no secrets and is not meant to be
     forced to ``0600``.)
 
@@ -132,7 +136,7 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
         existing_stat = os.stat(write_path)
     except FileNotFoundError:
         existing_stat = None
-    mode = stat.S_IMODE(existing_stat.st_mode) if existing_stat else _NEW_FILE_MODE
+    mode = stat.S_IMODE(existing_stat.st_mode) if existing_stat else None
 
     def _verify_symlink_target() -> None:
         if symlink_target is not None and path.resolve(strict=False) != symlink_target:
@@ -173,9 +177,7 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
         return
 
     try:
-        fd, tmp = tempfile.mkstemp(
-            dir=str(write_path.parent), prefix=f".{write_path.name}_", suffix=".tmp"
-        )
+        fd, tmp = _create_atomic_temp_file(write_path, existing=existing_stat is not None)
     except PermissionError:
         _write_in_place()
         return
@@ -201,9 +203,9 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
                 os.unlink(tmp)
                 _write_in_place()
                 return
-        if hasattr(os, "fchmod"):
+        if mode is not None and hasattr(os, "fchmod"):
             os.fchmod(fd, mode)
-        else:
+        elif mode is not None:
             os.chmod(tmp, mode)
         f = os.fdopen(fd, "w", encoding=encoding)
         owns_fd = False

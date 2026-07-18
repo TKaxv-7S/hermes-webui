@@ -23,6 +23,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -419,33 +420,38 @@ def test_forced_fallback_serializes_writers_and_syncs_only_complete_versions(
     assert target.read_bytes() in valid_versions
 
 
-def test_new_file_uses_cached_umask_mode(tmp_path: Path, monkeypatch) -> None:
-    """A freshly created file uses _NEW_FILE_MODE (umask-adjusted 0666), not 0600.
+def test_new_files_follow_the_current_umask_without_a_global_probe(tmp_path: Path) -> None:
+    """New config files use the kernel's current umask without mutating it.
 
-    The mode is cached at import (the process umask is read once while the module
-    is single-threaded), so this pins the cached value rather than probing umask
-    per call. 0o644 = 0o666 & ~0o022, the common server umask.
+    Importing this helper can occur on a request thread, so caching a mode by
+    calling ``os.umask`` at import time is still racy. A subprocess isolates the
+    process-global umask and proves two writes after import follow two different
+    active masks.
     """
-    from api import paths
+    script = """
+import os
+import stat
+import sys
+from pathlib import Path
+from api.paths import _atomic_write_text
 
-    monkeypatch.setattr(paths, "_NEW_FILE_MODE", 0o644)
-    target = tmp_path / "config.yaml"
-    assert not target.exists()
+base = Path(sys.argv[1])
+os.umask(0o077)
+_atomic_write_text(base / 'private.yaml', 'private: true\\n')
+os.umask(0o022)
+_atomic_write_text(base / 'shared.yaml', 'shared: true\\n')
+print(oct(stat.S_IMODE(os.stat(base / 'private.yaml').st_mode)))
+print(oct(stat.S_IMODE(os.stat(base / 'shared.yaml').st_mode)))
+"""
 
-    _atomic_write_text(target, "created: true\n")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
-    assert target.exists()
-    assert (os.stat(target).st_mode & 0o777) == 0o644
-
-
-def test_probe_umask_is_read_once_at_import() -> None:
-    """_NEW_FILE_MODE is a plausible umask-derived file mode, cached at import."""
-    from api import paths
-
-    # A file mode: no execute/setuid bits beyond rw for the three classes, and
-    # never more permissive than 0o666 (umask only ever clears bits).
-    assert 0 <= paths._NEW_FILE_MODE <= 0o666
-    assert paths._NEW_FILE_MODE & 0o111 == 0  # no execute bits on a data file
+    assert result.stdout.splitlines() == ["0o600", "0o644"]
 
 
 def test_atomic_write_follows_config_symlink(tmp_path: Path) -> None:
